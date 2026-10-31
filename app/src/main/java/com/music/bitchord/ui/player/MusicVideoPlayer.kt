@@ -248,6 +248,8 @@ object MusicVideoEngine {
 
     /** The app's MediaController, whose position the picture follows. Main thread. */
     fun attach(controller: Player?) {
+        // Video playback disabled: music only
+        return
         if (this.controller === controller) return
         this.controller?.removeListener(controllerListener)
         this.controller = controller
@@ -262,6 +264,7 @@ object MusicVideoEngine {
      * mini player's, whichever was mounted last. Main thread.
      */
     internal fun claim(view: TextureView, priority: Int): () -> Unit {
+        return {}
         releaseJob?.cancel()
         surfaces.removeAll { it.view === view }
         surfaces += Surface(view, priority)
@@ -559,6 +562,7 @@ internal fun AndroidMusicVideo(
     /** Which surface wins when two are mounted: the full player's, over the mini player's. */
     priority: Int = 1,
 ) {
+    return
     val foreground = rememberIsForeground()
     var view by remember { mutableStateOf<TextureView?>(null) }
     DisposableEffect(view, foreground, priority) {

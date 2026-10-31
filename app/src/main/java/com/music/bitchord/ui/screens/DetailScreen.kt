@@ -849,7 +849,7 @@ fun DetailScreen(
                                 palette = palette,
                                 onClick = { onSectionItemClick(item) },
                                 onLongPress = onSectionItemLongPress?.let { { it(item) } },
-                                modifier = Modifier.width(if (item.isVideo) VIDEO_CARD_WIDTH else SHELF_CARD_WIDTH),
+                                modifier = Modifier.width(SHELF_CARD_WIDTH),
                             )
                         }
                     }
@@ -2264,19 +2264,7 @@ private fun SectionCard(
     modifier: Modifier = Modifier.width(SHELF_CARD_WIDTH),
     onLongPress: (() -> Unit)? = null,
 ) {
-    // An artist's Videos shelf: widescreen, as on the web player.
-    if (item.isVideo) {
-        VideoShelfCard(
-            item = item,
-            onClick = onClick,
-            onLongPress = onLongPress,
-            modifier = modifier,
-            titleColor = palette.onBackground,
-            subtitleColor = palette.onBackgroundVariant,
-            placeholderColor = palette.elevated,
-        )
-        return
-    }
+
     Column(
         modifier = modifier
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress),

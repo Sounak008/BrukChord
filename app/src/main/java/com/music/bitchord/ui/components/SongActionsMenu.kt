@@ -262,20 +262,17 @@ fun SongActionsMenu(
             // the row above, so it sits right under it rather than merged
             // into it.
             onToggleAudioVersion?.let {
-                ActionRow(
-                    icon = if (isAudioVersion) SfIcons.Video else SfIcons.MusicNote,
-                    label = stringResource(
-                        when {
-                            audioVersionMissing && isAudioVersion -> R.string.no_video_version
-                            audioVersionMissing -> R.string.no_audio_version
-                            isAudioVersion -> R.string.convert_to_video
-                            else -> R.string.convert_to_audio
-                        },
-                    ),
-                    accent = palette.accent,
-                    enabled = !audioVersionMissing,
-                    onClick = it,
-                )
+                if (!isAudioVersion) {
+                    ActionRow(
+                        icon = SfIcons.MusicNote,
+                        label = stringResource(
+                            if (audioVersionMissing) R.string.no_audio_version else R.string.convert_to_audio
+                        ),
+                        accent = palette.accent,
+                        enabled = !audioVersionMissing,
+                        onClick = it,
+                    )
+                }
             }
         }
 

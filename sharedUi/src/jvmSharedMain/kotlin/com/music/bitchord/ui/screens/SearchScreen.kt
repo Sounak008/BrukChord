@@ -249,10 +249,11 @@ fun SearchScreen(
             // The same selector as the sources above it and a folder's tabs, so
             // the app has one look for "pick one of these".
             if (results != null && !suggesting && !searchingLibrary && !searchingAddons) {
+                val availableFilters = remember { SearchFilter.entries.filterNot { it == SearchFilter.VIDEOS } }
                 PillSegmentedControl(
-                    options = SearchFilter.entries.map { it.label },
-                    selectedIndex = filter.ordinal,
-                    onSelect = { onFilterChange(SearchFilter.entries[it]) },
+                    options = availableFilters.map { it.label },
+                    selectedIndex = availableFilters.indexOf(filter).coerceAtLeast(0),
+                    onSelect = { onFilterChange(availableFilters[it]) },
                     modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 6.dp),
                 )
             }

@@ -35,7 +35,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.music.bitchord"
+        applicationId = "com.music.brukchord"
         // Wear OS 3, the oldest a Galaxy Watch 4 ever shipped with.
         minSdk = 30
         targetSdk = 36
@@ -53,12 +53,12 @@ android {
     productFlavors {
         create("dev") {
             dimension = "env"
-            applicationId = "com.dev.bitchord"
-            resValue("string", "app_name", "BitChord Dev")
+            applicationId = "com.dev.brukchord"
+            resValue("string", "app_name", "BrukChord Dev")
         }
         create("prod") {
             dimension = "env"
-            resValue("string", "app_name", "BitChord")
+            resValue("string", "app_name", "BrukChord")
         }
     }
 
@@ -139,7 +139,7 @@ kotlin {
 // Named after the phone APKs (BitChord-v1.8.apk) but with their own prefix, so
 // the phone's updater — which only takes assets starting "BitChord-" — can never
 // pick a watch APK by mistake.
-base.archivesName.set("BitChordWear")
+base.archivesName.set("BrukChordWear")
 
 dependencies {
     implementation("androidx.wear.compose:compose-material3:1.6.2")

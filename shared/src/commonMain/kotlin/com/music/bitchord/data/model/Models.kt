@@ -481,8 +481,94 @@ fun shelfLayoutFor(title: String, items: List<ShelfItem>, fromList: Boolean): Sh
     val first = items.first()
     if (fromList && first.videoId != null) return ShelfLayout.LIST
     if (title.trim().equals("Listen again", ignoreCase = true)) return ShelfLayout.LIST
-    if (items.count { it.isVideo } * 2 > items.size) return ShelfLayout.VIDEO
+    if (items.count { it.isVideo } * 2 > items.size) return ShelfLayout.CARDS
     return ShelfLayout.CARDS
+}
+
+fun isMadeForYouShelf(title: String): Boolean {
+    val t = title.trim().lowercase()
+    return t == "made for you" ||
+        t == "mixed for you" ||
+        t == "mixes for you" ||
+        t == "your mixes" ||
+        t == "dành riêng cho bạn" ||
+        t == "ミックス" ||
+        t.contains("made for you") ||
+        t.contains("mixed for you")
+}
+
+fun isAlgorithmicHomeShelf(title: String): Boolean {
+    val t = title.trim().lowercase()
+
+    // 1. Explicitly rejected categories:
+    // Trending & charts
+    if (t.contains("trending") || t.contains("thịnh hành") || t.contains("急上昇")) return false
+    if (t.contains("chart") || t.contains("bảng xếp hạng") || t.contains("チャート")) return false
+    if (t.contains("hit") || t.contains("bản hit hôm nay") || t.contains("今日のヒット曲")) return false
+    if (t.contains("artists on the rise") || t.contains("nghệ sĩ đang lên")) return false
+    if (t.contains("concert") || t.contains("buổi hòa nhạc") || t.contains("コンサート")) return false
+    if (t.contains("short") || t.contains("ショート")) return false
+    if (t.contains("new release") || t.contains("bản phát hành mới") || t.contains("最新リリース")) return false
+    if (t.contains("video")) return false
+    if (t.contains("podcast")) return false
+    if (t.contains("community")) return false
+
+    // Region-based categories (India, etc.)
+    if (t.contains("india") || t.contains("bollywood") || t.contains("punjabi") || t.contains("desi") || t.contains("hindi") || t.contains("bhojpuri") || t.contains("tollywood")) return false
+
+    // Picks for you
+    if (t.contains("picks for you") || t.contains("top picks") || t.contains("featured playlists for you") || t.contains("danh sách phát đề xuất")) return false
+
+    // Library and personal taste
+    if (t.contains("library") || t.contains("thư viện") || t.contains("ライブラリ")) return false
+    if (t.contains("personal taste") || t.contains("your taste")) return false
+
+    // Moods and mood playlists
+    if (t.contains("mood") || t.contains("tâm trạng") || t.contains("ムード")) return false
+    if (t.contains("workout") || t.contains("energy") || t.contains("feel good") || t.contains("party") ||
+        t.contains("chill") || t.contains("focus") || t.contains("sleep") || t.contains("relax") ||
+        t.contains("sad") || t.contains("romance") || t.contains("commute")) return false
+
+    // 2. Explicitly allowed algorithmic categories:
+    // Made for you / Mixed for you
+    if (isMadeForYouShelf(title)) return true
+
+    // Quick picks
+    if (t == "quick picks" || t == "lựa chọn nhanh" || t == "chọn nhanh đài phát" || t == "クイック ミックス" || t.contains("quick pick")) return true
+
+    // Recents / Listen again / Recently played
+    if (t == "listen again" || t == "recents" || t == "recently played" || t == "nghe lại" || t == "もう一度聴く" ||
+        t.contains("listen again") || t.contains("recently played") || t.contains("recents")) return true
+
+    // Similar to ...
+    if (t.startsWith("similar to") || t.startsWith("tương tự như")) return true
+
+    // Forgotten favorites
+    if (t.contains("forgotten favorites") || t.contains("giai điệu quen thuộc") || t.contains("よく聴いたお気に入りの曲")) return true
+
+    // For you
+    if (t == "for you" || t == "dành cho bạn" || t == "あなたへのおすすめ") return true
+
+    // Recommended
+    if (t.startsWith("recommended") || t.startsWith("đề xuất")) return true
+
+    return false
+}
+
+fun filterAndOrderHomeShelves(shelves: List<HomeShelf>): List<HomeShelf> {
+    val filtered = shelves.filter { isAlgorithmicHomeShelf(it.title) }
+    val madeForYou = filtered.firstOrNull { isMadeForYouShelf(it.title) }
+    val others = filtered.filterNot { it === madeForYou }
+
+    return if (madeForYou != null) {
+        if (others.isNotEmpty()) {
+            listOf(others.first()) + madeForYou + others.drop(1)
+        } else {
+            listOf(madeForYou)
+        }
+    } else {
+        others
+    }
 }
 
 /**

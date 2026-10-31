@@ -418,7 +418,7 @@ fun MiniPlayer(
             // A music video plays here at its own 16:9, as the web player's
             // mini player does, rather than cropped into the square cover.
             val artWidth by animateDpAsState(
-                targetValue = if (song.isVideo) VIDEO_ART_WIDTH else 40.dp,
+                targetValue = 40.dp,
                 label = "miniArtWidth",
             )
             Box(
@@ -435,18 +435,7 @@ fun MiniPlayer(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-                // A music video keeps playing in the cover's place, cropped to
-                // it, as the web player's mini player does — the full player,
-                // when it is up, takes the picture over.
-                if (song.isVideo) {
-                    AndroidMusicVideo(
-                        videoId = song.videoId,
-                        fit = false,
-                        onRenderedChanged = {},
-                        modifier = Modifier.fillMaxSize(),
-                        priority = 0,
-                    )
-                }
+
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {

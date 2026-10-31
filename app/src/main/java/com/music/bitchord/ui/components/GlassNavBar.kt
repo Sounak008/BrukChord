@@ -386,7 +386,7 @@ private fun GlassNowPlaying(
             // A music video plays in the cover's place at its own 16:9, as in
             // the floating mini player; the full player takes it over when up.
             val artWidth by animateDpAsState(
-                targetValue = if (song.isVideo) ACCESSORY_ART_SIZE * (16f / 9f) else ACCESSORY_ART_SIZE,
+                targetValue = ACCESSORY_ART_SIZE,
                 label = "glassMiniArtWidth",
             )
             Box(
@@ -404,15 +404,6 @@ private fun GlassNowPlaying(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-                if (song.isVideo) {
-                    AndroidMusicVideo(
-                        videoId = song.videoId,
-                        fit = false,
-                        onRenderedChanged = {},
-                        modifier = Modifier.fillMaxSize(),
-                        priority = 0,
-                    )
-                }
             }
             Spacer(Modifier.width(if (isInline) 8.dp else 9.dp))
             // Title and artist at both densities, as Apple Music has them, in its

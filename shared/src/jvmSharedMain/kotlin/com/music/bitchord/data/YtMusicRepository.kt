@@ -20,6 +20,7 @@ import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.ShelfLayout
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UserPlaylist
@@ -85,12 +86,26 @@ object YtMusicRepository {
 
     /** Extra Play shelves are independently fetchable so each can appear as soon as it arrives. */
     suspend fun homeSupplement(browseId: String): Result<List<HomeShelf>> = call("home:$browseId") {
-        shelvesOf(browseId)
+        if (browseId == "FEmusic_mixed_for_you") {
+            val response = Innertube.browse(browseId)
+            val parsed = InnertubeParser.parseHome(response)
+            if (parsed.isNotEmpty()) {
+                parsed
+            } else {
+                val items = InnertubeParser.parseTwoRowItemsDeep(response)
+                if (items.isNotEmpty()) {
+                    listOf(HomeShelf("Made for you", items, layout = ShelfLayout.CARDS))
+                } else {
+                    emptyList()
+                }
+            }
+        } else {
+            shelvesOf(browseId)
+        }
     }
 
     val HOME_SUPPLEMENT_BROWSE_IDS = listOf(
-        "FEmusic_new_releases",
-        "FEmusic_explore",
+        "FEmusic_mixed_for_you",
     )
 
     /**

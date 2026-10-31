@@ -21,6 +21,7 @@ object JamInviteLink {
     private const val EXTRA_CONSUMED = "bitchord.jamInviteConsumed"
     private const val HOST = "bitchord.kushagrasingh.in"
     private const val CUSTOM_SCHEME = "bitchord"
+    private const val BRUKCHORD_SCHEME = "brukchord"
     private const val CUSTOM_HOST = "party"
 
     private val _pending = MutableStateFlow<ParsedJamInvite?>(null)
@@ -60,7 +61,7 @@ object JamInviteLink {
         val server = extractQueryParam(query, "server")?.let { sanitizeServerUrl(it) }
 
         // 1. Custom scheme: bitchord://party/<CODE> or bitchord://party?code=<CODE>
-        if (scheme == CUSTOM_SCHEME && host == CUSTOM_HOST) {
+        if ((scheme == CUSTOM_SCHEME || scheme == BRUKCHORD_SCHEME) && host == CUSTOM_HOST) {
             val pathPart = uri.path.orEmpty().trim('/').takeIf { it.isNotBlank() }
             val candidate = pathPart ?: extractQueryParam(query, "code") ?: return null
             val code = cleanCode(candidate) ?: return null

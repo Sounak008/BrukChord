@@ -70,6 +70,7 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.ShelfLayout
+import com.music.bitchord.data.model.filterAndOrderHomeShelves
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.TopPick
 import com.music.bitchord.data.model.TopPickMood
@@ -207,19 +208,7 @@ fun HomeScreen(
                     )
                 }
             }
-            if (onTopPickClick != null) {
-                when {
-                    !topPicks.isNullOrEmpty() -> item(key = "top-picks") {
-                        TopPicksShelf(
-                            picks = topPicks,
-                            listenerName = listenerName,
-                            onClick = onTopPickClick,
-                            onLongPress = onTopPickLongPress,
-                        )
-                    }
-                    topPicks == null && topPicksLoading -> topPicksSkeleton()
-                }
-            }
+
             when (state) {
                 is UiState.Loading -> {
                     if (recentlyPlayedLoading) {
@@ -295,11 +284,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     onMoodClick: ((TopPickMood, String) -> Unit)? = null,
     onMoodsShowAll: () -> Unit = {},
 ) {
-    shelves.forEachIndexed { index, shelf ->
-        // Find Your Mood follows the lead shelf, as on Apple Music's Home.
-        if (index == 1 && onMoodClick != null) {
-            item(key = "find-your-mood") { FindYourMoodShelf(onMoodClick, onMoodsShowAll) }
-        }
+    val displayShelves = filterAndOrderHomeShelves(shelves)
+    displayShelves.forEachIndexed { index, shelf ->
         item(key = shelf.title + index) {
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
             // Listen again and Quick picks are lists on the web player, as
@@ -607,6 +593,7 @@ internal fun localizeShelfTitle(title: String): String {
             trimmed.equals("もう一度聴く", ignoreCase = true) ->
             stringResource(Res.string.shelf_listen_again)
         trimmed.equals("Mixed for you", ignoreCase = true) ||
+            trimmed.equals("Made for you", ignoreCase = true) ||
             trimmed.equals("Dành riêng cho bạn", ignoreCase = true) ||
             trimmed.equals("ミックス", ignoreCase = true) ->
             stringResource(Res.string.shelf_mixed_for_you)
@@ -854,23 +841,13 @@ internal fun Shelf(
         ) {
             leadingCard?.let { card -> item(key = "leading") { card() } }
             items(shelf.items) { item ->
-                if (shelf.layout == ShelfLayout.VIDEO) {
-                    VideoShelfCard(
-                        item = item,
-                        onClick = { onItemClick(item) },
-                        onLongPress = onItemLongPress?.let { { it(item) } },
-                        isCurrent = isCurrentItem(item),
-                        isPlaying = isCurrentItem(item) && isPlaying,
-                    )
-                } else {
-                    ShelfCard(
-                        item = item,
-                        onClick = { onItemClick(item) },
-                        onLongPress = onItemLongPress?.let { { it(item) } },
-                        isCurrent = isCurrentItem(item),
-                        isPlaying = isCurrentItem(item) && isPlaying,
-                    )
-                }
+                ShelfCard(
+                    item = item,
+                    onClick = { onItemClick(item) },
+                    onLongPress = onItemLongPress?.let { { it(item) } },
+                    isCurrent = isCurrentItem(item),
+                    isPlaying = isCurrentItem(item) && isPlaying,
+                )
             }
         }
     }
@@ -936,10 +913,10 @@ fun VideoShelfCard(
 }
 
 /** A music video's frame. */
-const val VIDEO_ASPECT = 16f / 9f
+const val VIDEO_ASPECT = 1f
 
 /** Wide enough that a 16:9 card stands about as tall as a square [SHELF_CARD_WIDTH] one. */
-val VIDEO_CARD_WIDTH = 248.dp
+val VIDEO_CARD_WIDTH = SHELF_CARD_WIDTH
 
 /**
  * A card that isn't a thing yet — the dashed "New playlist" tile at the head

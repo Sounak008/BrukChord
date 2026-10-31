@@ -72,7 +72,7 @@
         android:localeConfig="@xml/locales_config"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.BitChord"
+        android:theme="@style/Theme.BrukChord"
         tools:targetApi="34">
 
         <!--
@@ -131,7 +131,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
-            android:theme="@style/Theme.BitChord">
+            android:theme="@style/Theme.BrukChord">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <!--
@@ -236,6 +236,9 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="bitchord"
+                    android:host="party" />
+                <data
+                    android:scheme="brukchord"
                     android:host="party" />
             </intent-filter>
 

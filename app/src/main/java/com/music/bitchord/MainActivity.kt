@@ -1056,10 +1056,11 @@ private fun BitChordApp(
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
     // A music video's picture follows this controller's clock — see [MusicVideoEngine].
-    DisposableEffect(controller) {
-        MusicVideoEngine.attach(controller)
-        onDispose { MusicVideoEngine.attach(null) }
-    }
+    // Video playback disabled: music only
+    // DisposableEffect(controller) {
+    //     MusicVideoEngine.attach(controller)
+    //     onDispose { MusicVideoEngine.attach(null) }
+    // }
     // A resume in a party is performed on the instant the server schedules, not
     // when it was pressed, and nothing about the player moves in between — so
     // the transport spends that round trip drawn as though the tap never landed.
@@ -3362,13 +3363,13 @@ private fun BitChordApp(
                                 onLoadMore = viewModel::loadMoreHome,
                                 loadingMore = homeLoadingMore,
                                 recentlyPlayedLoading = homeRecentlyPlayedLoading,
-                                topPicks = topPicks,
-                                topPicksLoading = topPicksLoading,
+                                topPicks = null,
+                                topPicksLoading = false,
                                 listenerName = account?.name,
-                                onTopPickClick = openTopPick,
-                                onMoodClick = playMood,
-                                onMoodsShowAll = { navigator.push(AppRoute.Moods) },
-                                artworkMotion = artworkMotion,
+                                onTopPickClick = null,
+                                onMoodClick = null,
+                                onMoodsShowAll = {},
+                                artworkMotion = false,
                                 onTopPickLongPress = { pick ->
                                     pick.browseId?.let { browseId ->
                                         onShelfLongPress(

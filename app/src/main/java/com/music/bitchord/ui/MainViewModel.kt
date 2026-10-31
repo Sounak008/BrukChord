@@ -51,6 +51,7 @@ import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.withoutRepeatsOf
+import com.music.bitchord.data.model.filterAndOrderHomeShelves
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
@@ -1711,7 +1712,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // out: it has its own skeleton at the head of the page rather than the
         // one at the tail.
         _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
-        loadTopPicks(identity, rebuild = false)
+        // loadTopPicks(identity, rebuild = false)
         viewModelScope.launch {
             launch {
                 try {
@@ -1860,19 +1861,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun publishHomeShelves(shelves: List<HomeShelf>, prepend: Boolean = false) {
         val existing = (_home.value as? UiState.Success)?.data.orEmpty()
-        if (prepend) {
+        val combined = if (prepend) {
             // YouTube's core home can also contain a stale "Recently played"
             // shelf. The dedicated history endpoint wins and replaces it.
             val replacing = shelves.map { it.title.lowercase(Locale.ROOT) }.toSet()
             homeSeenTitles.addAll(replacing)
-            _home.value = UiState.Success(shelves + existing.filterNot {
+            shelves + existing.filterNot {
                 it.title.lowercase(Locale.ROOT) in replacing
-            })
-            return
+            }
+        } else {
+            val added = shelves.withoutRepeatsOf(existing)
+                .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
+            existing + added
         }
-        val added = shelves.withoutRepeatsOf(existing)
-            .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
-        if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
+        val ordered = filterAndOrderHomeShelves(combined)
+        if (ordered.isNotEmpty()) _home.value = UiState.Success(ordered)
     }
 
     /** Refreshes the core feed without blanking the current Play page first. */
@@ -1887,7 +1890,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             homeSeenTitles.clear()
             val shelves = feed.shelves.withoutRepeatsOf(emptyList())
                 .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
-            if (shelves.isNotEmpty()) _home.value = UiState.Success(shelves)
+            val ordered = filterAndOrderHomeShelves(shelves)
+            if (ordered.isNotEmpty()) _home.value = UiState.Success(ordered)
         }
         recent?.await()?.onSuccess { shelf ->
             if (identity == listenerKey()) shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
@@ -1910,11 +1914,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val existing = (_home.value as? UiState.Success)?.data ?: emptyList()
                     val added = feed.shelves.withoutRepeatsOf(existing)
                         .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
-                    // A page with nothing new signals the feed has looped back on
-                    // itself rather than run dry with a token still attached —
-                    // treat it the same as exhausted so scrolling can't spin here.
                     homeContinuation = feed.continuation.takeIf { added.isNotEmpty() }
-                    if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
+                    val combined = existing + added
+                    val ordered = filterAndOrderHomeShelves(combined)
+                    if (ordered.isNotEmpty()) _home.value = UiState.Success(ordered)
                 }
             }
             if (identity == listenerKey()) _homeLoadingMore.value = false

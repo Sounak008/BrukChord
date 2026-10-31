@@ -180,7 +180,7 @@
     <string name="shelf_from_your_library">From your library</string>
     <string name="shelf_hits_today">Hits today</string>
     <string name="shelf_listen_again">Listen again</string>
-    <string name="shelf_mixed_for_you">Mixed for you</string>
+    <string name="shelf_mixed_for_you">Made for you</string>
     <string name="shelf_new_releases">New releases</string>
     <string name="shelf_quick_picks">Quick picks</string>
     <string name="shelf_recents">Recents</string>
@@ -200,7 +200,7 @@
     <string name="subscriptions">Subscriptions</string>
     <string name="your_replay">Your Replay</string>
     <string name="your_listening_experience">Your listening experience</string>
-    <string name="default_replay_holder">BitChord listener</string>
+    <string name="default_replay_holder">BrukChord listener</string>
     <string name="member_since">Member since</string>
     <string name="import_spotify">Import Spotify</string>
     <string name="import_spotify_subtitle">From a playlist link</string>
