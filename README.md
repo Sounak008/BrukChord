@@ -89,7 +89,7 @@ Grab the latest signed APK from the [Releases](https://github.com/Sounak008/Bruk
 
 We welcome contributions to BrukChord! Please review our [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) before submitting a Pull Request.
 
-[**Contributing Guide**](CONTRIBUTING.md) · [**Code of Conduct**](CODE_OF_CONDUCT.md) · [**Maintainers**](MAINTAINERS.md) · [**Additional Docs**](ADDITIONAL.md)
+[**Contributing Guide**](CONTRIBUTING.md) · [**Code of Conduct**](CODE_OF_CONDUCT.md) · [**Maintainers**](MAINTAINERS.md) (List of All Original BitChord Maintainers, Thanks to all of you!!) · [**Additional Docs**](ADDITIONAL.md)
 
 ---
 
