@@ -199,6 +199,8 @@
     <string name="convert_to_audio">Convert to audio</string>
     <string name="convert_to_video">Convert to video</string>
     <string name="converting_to_audio">Converting to audio…</string>
+    <string name="replace_video_with_song_title">Replace video with song version</string>
+    <string name="replace_video_with_song_desc">Detects video-only tracks and plays their official song release so lossless audio is available</string>
     <string name="revert_to_original">Revert to original</string>
     <string name="upgrade_quality">Upgrade quality</string>
     <string name="dolby_atmos">Dolby Atmos</string>

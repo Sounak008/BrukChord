@@ -1605,6 +1605,17 @@ class PlaybackService : MediaLibraryService() {
                     .setHttpRequestHeaders(serving.headers)
                     .build()
             }
+            val rawTarget = SourceResolver.targetIn(dataSpec.uri)
+            val audioSong = runBlocking(about) { resolveAudioSongVersion(videoId, rawTarget) }
+            val effectiveTarget = audioSong?.let { TrackMatcher.targetOf(it) } ?: rawTarget
+            val effectiveVideoId = audioSong?.videoId ?: videoId
+            if (audioSong != null) {
+                TrackLog.d(
+                    "BitChord",
+                    "replacing video stream for '$videoId' ('${rawTarget.title}') with official audio song '${audioSong.title}' (${audioSong.videoId})",
+                    about = videoId,
+                )
+            }
             // A track queued from YouTube may be held by a source the user
             // ranked above it — see [SourceResolver.substituteForYouTube] and
             // [raceYouTubeOrModule]. Only worth the extra lookup when
@@ -1613,7 +1624,7 @@ class PlaybackService : MediaLibraryService() {
             if (!SourceResolver.canSubstituteForYouTube()) {
                 val streamUrl = try {
                     runBlocking(about) {
-                        withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
+                        withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(effectiveVideoId) }
                     }
                 } catch (e: TimeoutCancellationException) {
                     throw java.io.IOException("Stream resolution timed out for $videoId", e)
@@ -1649,7 +1660,7 @@ class PlaybackService : MediaLibraryService() {
             if (AudioCache.heldByYouTube(dataSpec.key ?: AudioCache.cacheKeyOf(dataSpec.uri))) {
                 val streamUrl = try {
                     runBlocking(about) {
-                        withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
+                        withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(effectiveVideoId) }
                     }
                 } catch (e: TimeoutCancellationException) {
                     throw java.io.IOException("Stream resolution timed out for $videoId", e)
@@ -1660,7 +1671,7 @@ class PlaybackService : MediaLibraryService() {
                 if (QualityUpgrade.couldStillUpgrade(videoId, dataSpec.uri)) {
                     val pending = QualityUpgrade.settledForLess(
                         mediaId = videoId,
-                        target = SourceResolver.targetIn(dataSpec.uri),
+                        target = effectiveTarget,
                         playing = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
                     )
                     if (!pending) NerdStats.onLosslessRaceEnd(videoId)
@@ -1673,7 +1684,8 @@ class PlaybackService : MediaLibraryService() {
             val won = runBlocking(about) {
                 resolveWithModulePriority(
                     videoId = videoId,
-                    target = SourceResolver.targetIn(dataSpec.uri),
+                    target = effectiveTarget,
+                    effectiveVideoId = effectiveVideoId,
                 )
             }
             when (won) {
@@ -4703,7 +4715,9 @@ class PlaybackService : MediaLibraryService() {
         val videoId = uri.getQueryParameter("v") ?: return false
         val downloaded = com.music.bitchord.download.Downloads.savedUri(this, videoId) != null
         if (downloaded) return false
-        val target = SourceResolver.targetIn(uri)
+        val rawTarget = SourceResolver.targetIn(uri)
+        val audioSong = resolveAudioSongVersion(videoId, rawTarget)
+        val target = audioSong?.let { TrackMatcher.targetOf(it) } ?: rawTarget
         val expectedSec = target.durationSec
         if (TrackMatcher.isSevereMismatch(expectedSec, durationSec)) {
             TrackLog.w(
@@ -5462,9 +5476,40 @@ class PlaybackService : MediaLibraryService() {
      * break in the audio, in exchange for the listener hearing something now
      * rather than waiting in silence for the good copy.
      */
+    /**
+     * Resolves a video-only track to its official audio release on YouTube Music
+     * if [AppSettings.autoReplaceVideoWithAudio] is enabled.
+     */
+    private suspend fun resolveAudioSongVersion(
+        videoId: String,
+        target: TrackMatcher.Target,
+    ): Song? {
+        if (!AppSettings.autoReplaceVideoWithAudio.value) return null
+        if (!target.isVideo) return null
+        if (target.title.isBlank()) return null
+        if (OriginalVersion.isPinned(videoId)) return null
+        val cached = YtMusicRepository.cachedAudioVersion(videoId)
+        if (cached != null) {
+            return if (cached.videoId != videoId && !cached.isVideo) cached else null
+        }
+        val videoSong = Song(
+            videoId = videoId,
+            title = target.title,
+            artist = target.artist,
+            thumbnailUrl = null,
+            durationText = target.durationSec?.let { sec -> "${sec / 60}:${(sec % 60).toString().padStart(2, '0')}" },
+            albumName = target.album,
+            isExplicit = target.isExplicit,
+            isVideo = true,
+        )
+        val resolved = runCatching { YtMusicRepository.resolveAudio(videoSong) }.getOrNull()
+        return if (resolved != null && resolved.videoId != videoId && !resolved.isVideo) resolved else null
+    }
+
     private suspend fun resolveWithModulePriority(
         videoId: String,
         target: TrackMatcher.Target,
+        effectiveVideoId: String = videoId,
     ): Resolved {
         // A substitute already broke this track once — see
         // [StreamChoice.refuseSubstitutes]. Racing the modules again would find
@@ -5475,9 +5520,9 @@ class PlaybackService : MediaLibraryService() {
         // handing over the search that just cost three attempts would only
         // schedule a fourth.
         if (StreamChoice.substitutesRefused(videoId)) {
-            return Resolved.YouTube(StreamResolver.resolve(videoId))
+            return Resolved.YouTube(StreamResolver.resolve(effectiveVideoId))
         }
-        if (DirectSourceGate.isActive()) return resolveDirect(videoId, target)
+        if (DirectSourceGate.isActive()) return resolveDirect(videoId, target, effectiveVideoId)
         NerdStats.onLosslessRaceStart(videoId)
         // Both legs are parented to the service's scope rather than to the
         // caller, so neither inherits whose track this is — see
@@ -5492,7 +5537,7 @@ class PlaybackService : MediaLibraryService() {
         // that need it, and an async that fails without ever being awaited is
         // an unhandled exception in this service's scope.
         val fallback = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
-            runCatching { StreamResolver.resolve(videoId) }
+            runCatching { StreamResolver.resolve(effectiveVideoId) }
         }
 
         // First past the post. A null because [lookup] won is a module miss; a
@@ -5617,7 +5662,11 @@ class PlaybackService : MediaLibraryService() {
      * [replayAsManifest] re-prepares it with the type declared, which is a
      * short cut before the first note rather than a YouTube start and a seam.
      */
-    private suspend fun resolveDirect(videoId: String, target: TrackMatcher.Target): Resolved {
+    private suspend fun resolveDirect(
+        videoId: String,
+        target: TrackMatcher.Target,
+        effectiveVideoId: String = videoId,
+    ): Resolved {
         val direct = runCatching { DirectSourceGate.lookup(videoId, target) }
             .onFailure { if (it is CancellationException) throw it }
             .getOrNull()
@@ -5634,7 +5683,7 @@ class PlaybackService : MediaLibraryService() {
             about = videoId,
         )
         val url = try {
-            StreamResolver.resolve(videoId)
+            StreamResolver.resolve(effectiveVideoId)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             // YouTube cannot serve it, so a lookup still running is all that

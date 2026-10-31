@@ -1127,6 +1127,7 @@ private fun BitChordApp(
         }
     }
     val shuffleEnabled by QueueShuffle.enabled.collectAsStateWithLifecycle()
+    val autoReplaceVideoWithAudio by AppSettings.autoReplaceVideoWithAudio.collectAsStateWithLifecycle()
     // For the version switch's "there is no other version" notice.
     val versionContext = LocalContext.current
     // Tracks whose other cut a switch looked for and didn't find: their menu
@@ -1348,7 +1349,11 @@ private fun BitChordApp(
      * preference is the version the listener asked to hear. Manual requests
      * preserve the old behaviour and let the video keep playing meanwhile.
      */
-    suspend fun switchToMusicOnly(song: Song, pauseWhileResolving: Boolean) {
+    suspend fun switchToMusicOnly(
+        song: Song,
+        pauseWhileResolving: Boolean,
+        isAutomatic: Boolean = false,
+    ) {
         val c = controller ?: return
         val index = c.currentMediaItemIndex
         if (index !in 0 until c.mediaItemCount ||
@@ -1374,7 +1379,7 @@ private fun BitChordApp(
                 TrackLog.w("Player", "audio switch found no distinct official song", song.videoId)
                 // The switch is always offered now, so say when there was nothing to switch to.
                 if (song.videoId !in missingVersions) missingVersions += song.videoId
-                if (stillCurrent) showQueueNotice(versionContext.getString(R.string.no_audio_version))
+                if (stillCurrent && !isAutomatic) showQueueNotice(versionContext.getString(R.string.no_audio_version))
                 if (stillCurrent && resumeAfterResolution) c.play()
                 return
             }
@@ -1578,6 +1583,17 @@ private fun BitChordApp(
             convertedFromAudio = null
             convertedVideoId = null
             switchingAudioVersion = false
+        }
+    }
+    LaunchedEffect(player.song?.videoId, autoReplaceVideoWithAudio) {
+        val currentSong = player.song
+        if (autoReplaceVideoWithAudio &&
+            currentSong != null &&
+            currentSong.isVideo &&
+            currentSong.videoId != keepVideoId &&
+            !OriginalVersion.isPinned(currentSong.videoId)
+        ) {
+            switchToMusicOnly(currentSong, pauseWhileResolving = false, isAutomatic = true)
         }
     }
 

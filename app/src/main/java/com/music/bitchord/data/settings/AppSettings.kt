@@ -423,6 +423,12 @@ object AppSettings {
     /** Put the playing track's codec, bitrate and sample rate on the player. */
     val showNerdStats = MutableStateFlow(false)
 
+    /**
+     * Automatically replace video-only tracks with their official audio/song
+     * version so lossless audio quality and catalogue metadata become available.
+     */
+    val autoReplaceVideoWithAudio = MutableStateFlow(true)
+
     /** Show the output / Listen Together pill under the player's transport. */
     val showListenTogetherButton = MutableStateFlow(false)
 
@@ -980,6 +986,7 @@ object AppSettings {
         showQueueHistory.value = prefs.getBoolean(KEY_SHOW_QUEUE_HISTORY, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
+        autoReplaceVideoWithAudio.value = prefs.getBoolean(KEY_AUTO_REPLACE_VIDEO_WITH_AUDIO, true)
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
@@ -1389,6 +1396,11 @@ object AppSettings {
     fun setDontRepeatSuggestions(value: Boolean) {
         dontRepeatSuggestions.value = value
         prefs.edit().putBoolean(KEY_DONT_REPEAT_SUGGESTIONS, value).apply()
+    }
+
+    fun setAutoReplaceVideoWithAudio(value: Boolean) {
+        autoReplaceVideoWithAudio.value = value
+        prefs.edit().putBoolean(KEY_AUTO_REPLACE_VIDEO_WITH_AUDIO, value).apply()
     }
 
     fun setSmartVersionAlignment(value: Boolean) {
@@ -2177,6 +2189,7 @@ object AppSettings {
     private const val KEY_SHOW_QUEUE_HISTORY = "show_queue_history"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
+    private const val KEY_AUTO_REPLACE_VIDEO_WITH_AUDIO = "auto_replace_video_with_audio"
     private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"

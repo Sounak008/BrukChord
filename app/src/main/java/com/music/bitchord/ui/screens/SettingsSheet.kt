@@ -286,6 +286,7 @@ fun SettingsScreen(
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
     val smartVersionAlignment by AppSettings.smartVersionAlignment.collectAsStateWithLifecycle()
+    val autoReplaceVideoWithAudio by AppSettings.autoReplaceVideoWithAudio.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val highPerformanceMode by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
@@ -1551,6 +1552,21 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setSmartVersionAlignment(!smartVersionAlignment) },
+                )
+            }
+            val autoReplaceVideoTitle = stringResource(R.string.replace_video_with_song_title)
+            row(autoReplaceVideoTitle, "video", "audio", "lossless", "stream", "song", "version") {
+                SettingsRow(
+                    icon = SfIcons.MusicNote,
+                    title = autoReplaceVideoTitle,
+                    subtitle = stringResource(R.string.replace_video_with_song_desc),
+                    trailing = {
+                        IosSwitch(
+                            checked = autoReplaceVideoWithAudio,
+                            onCheckedChange = AppSettings::setAutoReplaceVideoWithAudio,
+                        )
+                    },
+                    onClick = { AppSettings.setAutoReplaceVideoWithAudio(!autoReplaceVideoWithAudio) },
                 )
             }
             val showNerdStatsTitle = stringResource(R.string.show_nerd_stats)

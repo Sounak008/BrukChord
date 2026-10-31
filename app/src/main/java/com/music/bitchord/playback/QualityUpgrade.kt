@@ -4,6 +4,8 @@ import android.net.Uri
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -277,9 +279,15 @@ object QualityUpgrade {
      * entry and the settings; nothing here touches the network.
      */
     fun couldStillUpgrade(mediaId: String, uri: Uri?): Boolean {
-        if (uri == null || uri.getQueryParameter("v") == null ||
-            uri.getQueryParameter("m") == "1"
-        ) return false
+        if (uri == null || uri.getQueryParameter("v") == null) return false
+        if (uri.getQueryParameter("m") == "1") {
+            if (!AppSettings.autoReplaceVideoWithAudio.value) return false
+            if (OriginalVersion.isPinned(mediaId)) return false
+            val cached = YtMusicRepository.cachedAudioVersion(mediaId)
+            if (cached != null && (cached.isVideo || cached.videoId == mediaId)) {
+                return false
+            }
+        }
         // Already upgraded: this *is* the better copy. Except when the listener
         // has asked by hand, where the marker is on a *reverted* item and
         // saying "this is the copy that was chosen" is the very thing being
@@ -358,6 +366,9 @@ object QualityUpgrade {
         playing: StreamFormat?,
     ): Boolean {
         if (!couldStillUpgrade(mediaId, uri)) return false
+        val effectiveTarget = if (target.isVideo) {
+            YtMusicRepository.cachedAudioVersion(mediaId)?.let { TrackMatcher.targetOf(it) } ?: target
+        } else target
         // [asked] is set only on the two *verdicts* below, not on adoption.
         // Both are facts about the bytes on disk and the row that queued them,
         // neither changes while the track plays, and neither is worth
@@ -378,20 +389,20 @@ object QualityUpgrade {
             // reached on the previous track's format.
             TrackLog.d(
                 TAG,
-                "'${target.title}' is already playing $playingMime from cache; no second look needed",
+                "'${effectiveTarget.title}' is already playing $playingMime from cache; no second look needed",
                 about = mediaId,
             )
             return false
         }
-        if (target.title.isBlank()) {
+        if (effectiveTarget.title.isBlank()) {
             asked += mediaId
             return false
         }
-        pending[mediaId] = Pending(target, inFlight = null, playing = playing)
+        pending[mediaId] = Pending(effectiveTarget, inFlight = null, playing = playing)
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
             TAG,
-            "'${target.title}' is playing ${playing?.summary ?: "an unmeasured stream"} from cache " +
+            "'${effectiveTarget.title}' is playing ${playing?.summary ?: "an unmeasured stream"} from cache " +
                 "and was never resolved; looking for a better copy",
             about = mediaId,
         )
