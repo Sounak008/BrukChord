@@ -27,18 +27,37 @@ jobs:
         cache: gradle
 
     - name: Setup Secrets (Keystore & local.properties)
+      env:
+        KEYSTORE_DATA: ${{ secrets.KEYSTORE_BASE64 }}
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       run: |
         echo "LASTFM_API_KEY=${{ secrets.LASTFM_API_KEY }}" > local.properties
         echo "LASTFM_SECRET=${{ secrets.LASTFM_SECRET }}" >> local.properties
         echo "LISTEN_TOGETHER_SERVER=${{ secrets.LISTEN_TOGETHER_SERVER }}" >> local.properties
 
-        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > brukchord-release.jks
-        {
-          echo "storeFile=brukchord-release.jks"
-          echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}"
-          echo "keyAlias=${{ secrets.KEY_ALIAS }}"
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
-        } > keystore.properties
+        if [ -n "$KEYSTORE_DATA" ] && [ -n "$KEY_ALIAS" ]; then
+          echo "$KEYSTORE_DATA" | base64 -d > brukchord-release.jks
+          {
+            echo "storeFile=brukchord-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+        else
+          echo "No release keystore secret configured; generating signing keystore."
+          keytool -genkeypair -v -keystore brukchord-release.jks -alias brukchord \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=BrukChord, OU=BrukChord, O=BrukChord, L=Unknown, ST=Unknown, C=US"
+          {
+            echo "storeFile=brukchord-release.jks"
+            echo "storePassword=android"
+            echo "keyAlias=brukchord"
+            echo "keyPassword=android"
+          } > keystore.properties
+        fi
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
