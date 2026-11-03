@@ -2,7 +2,6 @@ name: Android Release APK
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -63,19 +62,13 @@ jobs:
       run: chmod +x gradlew
 
     - name: Build Signed Prod Release APK
-      run: ./gradlew assembleProdRelease
+      run: ./gradlew :app:assembleProdRelease :tv:assembleProdRelease
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: brukchord-prod-release-signed
         path: app/build/outputs/apk/prod/release/*.apk
-
-    - name: Upload Wear OS APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: brukchord-wear-prod-release-signed
-        path: wearos/build/outputs/apk/prod/release/*.apk
 
     - name: Upload TV APK Artifact
       uses: actions/upload-artifact@v4
@@ -109,12 +102,6 @@ jobs:
             cp "$apk" "release-assets/BrukChord-v${VERSION}_x86_64.apk"
           else
             cp "$apk" "release-assets/${filename}"
-          fi
-        done
-
-        for apk in wearos/build/outputs/apk/prod/release/*.apk; do
-          if [ -f "$apk" ]; then
-            cp "$apk" "release-assets/BrukChordWear-v${VERSION}.apk"
           fi
         done
 
