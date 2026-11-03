@@ -1,5 +1,7 @@
 package com.music.bitchord.data.model
 
+import kotlinx.serialization.Serializable
+
 /** Tier of an item in the playback queue. */
 enum class QueueTier {
     /** Explicitly queued by user ("Play Next", "Add to Queue", or preserved user queue). */
@@ -399,6 +401,7 @@ enum class SearchFilter(val label: String, val params: String?) {
 }
 
 /** A card in a home-feed carousel: either a track (videoId) or an album/playlist (browseId). */
+@Serializable
 data class ShelfItem(
     val title: String,
     val subtitle: String,
@@ -413,6 +416,7 @@ data class ShelfItem(
 )
 
 /** How a shelf's items are laid out — the web player's `ShelfLayout`, by the same rules. */
+@Serializable
 enum class ShelfLayout {
     /** Square cards in one scrolling row. */
     CARDS,
@@ -422,6 +426,8 @@ enum class ShelfLayout {
 
     /** Widescreen cards for music videos. */
     VIDEO,
+
+    CIRCLES,
 }
 
 /** The signed-in Google account, as YouTube Music reports it. */
@@ -461,6 +467,7 @@ data class AccountChannel(
     val key: String get() = pageId ?: dataSyncId ?: name
 }
 
+@Serializable
 data class HomeShelf(
     val title: String,
     val items: List<ShelfItem>,
@@ -497,33 +504,56 @@ fun isMadeForYouShelf(title: String): Boolean {
         t.contains("mixed for you")
 }
 
+fun isArtistsShelf(title: String): Boolean {
+    val t = title.trim().lowercase()
+    return t == "artists" || t == "nghệ sĩ" || t == "アーティスト" || t == "artist" || t.contains("artists")
+}
+
+fun isQuickPicksShelf(title: String): Boolean {
+    val t = title.trim().lowercase()
+    return t == "quick picks" || t == "lựa chọn nhanh" || t == "chọn nhanh đài phát" || t == "クイック ミックス" || t.contains("quick pick")
+}
+
+fun isRecentsOrListenAgainShelf(title: String): Boolean {
+    val t = title.trim().lowercase()
+    return t == "listen again" || t == "recents" || t == "recently played" || t == "nghe lại" || t == "もう一度聴く" ||
+        t.contains("listen again") || t.contains("recently played") || t.contains("recents")
+}
+
+fun isRejectedHomeShelf(title: String): Boolean {
+    val t = title.trim().lowercase()
+
+    // Artists shelf must never be rejected
+    if (isArtistsShelf(title)) return false
+
+    // 1. Trending & charts
+    if (t.contains("trending") || t.contains("thịnh hành") || t.contains("急上昇")) return true
+    if (t.contains("chart") || t.contains("bảng xếp hạng") || t.contains("チャート")) return true
+    if (t.contains("artists on the rise") || t.contains("nghệ sĩ đang lên")) return true
+    if (t.contains("concert") || t.contains("buổi hòa nhạc") || t.contains("コンサート")) return true
+    if (t.contains("short") || t.contains("ショート")) return true
+    if (t.contains("video")) return true
+    if (t.contains("podcast")) return true
+    if (t.contains("community")) return true
+
+    // 2. Region-based categories (India, etc.)
+    if (t.contains("india") || t.contains("bollywood") || t.contains("punjabi") || t.contains("desi") || t.contains("hindi") || t.contains("bhojpuri") || t.contains("tollywood")) return true
+
+    return false
+}
+
 fun isAlgorithmicHomeShelf(title: String): Boolean {
     val t = title.trim().lowercase()
 
     // 1. Explicitly rejected categories:
-    // Trending & charts
-    if (t.contains("trending") || t.contains("thịnh hành") || t.contains("急上昇")) return false
-    if (t.contains("chart") || t.contains("bảng xếp hạng") || t.contains("チャート")) return false
+    if (isRejectedHomeShelf(title)) return false
+
+    // Explicitly rejected personal taste / non-algorithmic categories
     if (t.contains("hit") || t.contains("bản hit hôm nay") || t.contains("今日のヒット曲")) return false
-    if (t.contains("artists on the rise") || t.contains("nghệ sĩ đang lên")) return false
-    if (t.contains("concert") || t.contains("buổi hòa nhạc") || t.contains("コンサート")) return false
-    if (t.contains("short") || t.contains("ショート")) return false
     if (t.contains("new release") || t.contains("bản phát hành mới") || t.contains("最新リリース")) return false
-    if (t.contains("video")) return false
-    if (t.contains("podcast")) return false
-    if (t.contains("community")) return false
-
-    // Region-based categories (India, etc.)
-    if (t.contains("india") || t.contains("bollywood") || t.contains("punjabi") || t.contains("desi") || t.contains("hindi") || t.contains("bhojpuri") || t.contains("tollywood")) return false
-
-    // Picks for you
     if (t.contains("picks for you") || t.contains("top picks") || t.contains("featured playlists for you") || t.contains("danh sách phát đề xuất")) return false
-
-    // Library and personal taste
     if (t.contains("library") || t.contains("thư viện") || t.contains("ライブラリ")) return false
     if (t.contains("personal taste") || t.contains("your taste")) return false
-
-    // Moods and mood playlists
     if (t.contains("mood") || t.contains("tâm trạng") || t.contains("ムード")) return false
     if (t.contains("workout") || t.contains("energy") || t.contains("feel good") || t.contains("party") ||
         t.contains("chill") || t.contains("focus") || t.contains("sleep") || t.contains("relax") ||
@@ -533,12 +563,14 @@ fun isAlgorithmicHomeShelf(title: String): Boolean {
     // Made for you / Mixed for you
     if (isMadeForYouShelf(title)) return true
 
+    // Artists (user listened artists)
+    if (isArtistsShelf(title)) return true
+
     // Quick picks
-    if (t == "quick picks" || t == "lựa chọn nhanh" || t == "chọn nhanh đài phát" || t == "クイック ミックス" || t.contains("quick pick")) return true
+    if (isQuickPicksShelf(title)) return true
 
     // Recents / Listen again / Recently played
-    if (t == "listen again" || t == "recents" || t == "recently played" || t == "nghe lại" || t == "もう一度聴く" ||
-        t.contains("listen again") || t.contains("recently played") || t.contains("recents")) return true
+    if (isRecentsOrListenAgainShelf(title)) return true
 
     // Similar to ...
     if (t.startsWith("similar to") || t.startsWith("tương tự như")) return true
@@ -556,19 +588,42 @@ fun isAlgorithmicHomeShelf(title: String): Boolean {
 }
 
 fun filterAndOrderHomeShelves(shelves: List<HomeShelf>): List<HomeShelf> {
-    val filtered = shelves.filter { isAlgorithmicHomeShelf(it.title) }
-    val madeForYou = filtered.firstOrNull { isMadeForYouShelf(it.title) }
-    val others = filtered.filterNot { it === madeForYou }
-
-    return if (madeForYou != null) {
-        if (others.isNotEmpty()) {
-            listOf(others.first()) + madeForYou + others.drop(1)
-        } else {
-            listOf(madeForYou)
-        }
-    } else {
-        others
+    // 1. Filter out shelves that are entirely video or explicitly rejected (trending, regional, etc.)
+    val eligible = shelves.filterNot { shelf ->
+        isRejectedHomeShelf(shelf.title) || (shelf.items.isNotEmpty() && shelf.items.all { it.isVideo })
     }
+
+    // 2. Try algorithmic shelves first (e.g. for signed-in accounts or users with history)
+    val algorithmic = eligible.filter { isAlgorithmicHomeShelf(it.title) }
+    val base = if (algorithmic.isNotEmpty()) {
+        algorithmic
+    } else if (eligible.isNotEmpty()) {
+        // Fallback for guest mode / unsigned users: keep non-rejected music shelves
+        eligible
+    } else {
+        // Ultimate fallback: keep any shelf where items aren't all videos so home never dead-ends
+        shelves.filterNot { it.title.contains("video", ignoreCase = true) || (it.items.isNotEmpty() && it.items.all { item -> item.isVideo }) }
+    }
+
+    // Order strictly:
+    // 1. Recents / Listen again (if present)
+    // 2. Mixed for you / Made for you
+    // 3. Artists (kept between Mixed for you and Quick picks)
+    // 4. Quick picks
+    // 5. Remaining algorithmic shelves
+    val recents = base.firstOrNull { isRecentsOrListenAgainShelf(it.title) }
+    val madeForYou = base.firstOrNull { isMadeForYouShelf(it.title) }
+    val artists = base.firstOrNull { isArtistsShelf(it.title) || it.layout == ShelfLayout.CIRCLES }
+    val quickPicks = base.firstOrNull { isQuickPicksShelf(it.title) }
+    val others = base.filterNot { it === recents || it === madeForYou || it === artists || it === quickPicks }
+
+    val result = mutableListOf<HomeShelf>()
+    recents?.let { result.add(it) }
+    madeForYou?.let { result.add(it) }
+    artists?.let { result.add(it) }
+    quickPicks?.let { result.add(it) }
+    result.addAll(others)
+    return result
 }
 
 /**
@@ -599,6 +654,7 @@ private const val REPEAT_SHELF_SHARE = 0.6
 private fun HomeShelf.browseKeys(): Set<String> = items.mapNotNullTo(HashSet()) { it.browseId }
 
 /** A page of the Home feed, plus the token for the next one — null once exhausted. */
+@Serializable
 data class HomeFeed(
     val shelves: List<HomeShelf>,
     val continuation: String?,

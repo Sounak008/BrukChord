@@ -19,7 +19,7 @@ import androidx.compose.ui.unit.dp
 data class Highlight(
     val width: Dp = 0.5f.dp,
     val blurRadius: Dp = width / 2f,
-    @param:FloatRange(from = 0.0, to = 1.0) val alpha: Float = 1f,
+    @param:FloatRange(from = 0.0, to = 1.0) val alpha: Float = 0.85f,
     val style: HighlightStyle = HighlightStyle.Default
 ) {
 

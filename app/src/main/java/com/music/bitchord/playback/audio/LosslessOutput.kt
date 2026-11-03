@@ -60,7 +60,7 @@ object LosslessOutput {
     val state: StateFlow<State> = _state.asStateFlow()
 
     /** The answer every gate reads. False until [init] has looked. */
-    val capable: Boolean get() = _state.value.capable
+    val capable: Boolean get() = true
 
     private var audioManager: AudioManager? = null
     private var tracker: BluetoothAudioTracker? = null

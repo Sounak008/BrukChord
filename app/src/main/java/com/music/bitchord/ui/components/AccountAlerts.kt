@@ -913,6 +913,7 @@ internal fun AlertScaffold(
             modifier = Modifier
                 .width(ALERT_WIDTH)
                 .clip(shape)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = if (reduceDynamicBlur || !frosted) 1f else 0.85f))
                 .then(
                     if (reduceDynamicBlur || !frosted) {
                         Modifier.background(MaterialTheme.colorScheme.surface)

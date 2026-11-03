@@ -967,6 +967,21 @@ fun SettingsScreen(
             // its own. Its own switch because it costs frames of its own. Reduce
             // dynamic blur turns it off.
             if (liquidGlass && liquidGlassSupported) {
+                val glassTint by AppSettings.liquidGlassTint.collectAsStateWithLifecycle()
+                val tintPercent = (glassTint * 100).roundToInt()
+                val glassTintTitle = stringResource(R.string.liquid_glass_tint)
+                row(glassTintTitle, "glass", "tint", "opacity", "slider", divided = true) {
+                    SliderRow(
+                        icon = SfIcons.Tune,
+                        title = glassTintTitle,
+                        subtitle = stringResource(R.string.liquid_glass_tint_desc),
+                        value = "$tintPercent%",
+                        sliderValue = glassTint,
+                        onSliderValue = AppSettings::setLiquidGlassTint,
+                        valueRange = 0f..1f,
+                        steps = 20,
+                    )
+                }
                 val progressiveBlurTitle = stringResource(R.string.progressive_blur)
                 row(progressiveBlurTitle, "blur", "status bar", "top", divided = false) {
                     SettingsSubRow(

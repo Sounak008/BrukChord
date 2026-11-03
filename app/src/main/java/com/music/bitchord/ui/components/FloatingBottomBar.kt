@@ -144,7 +144,7 @@ internal fun tabLabelStyle(): TextStyle =
  * Stiffness 320 puts the whole movement at roughly a third of a second, quick
  * enough that the tap and the arrival feel like one event.
  */
-internal val GlassSpring = spring<Float>(dampingRatio = 0.72f, stiffness = 320f)
+internal val GlassSpring = spring<Float>(dampingRatio = 0.82f, stiffness = 480f)
 
 /**
  * How far the indicator elongates along its travel, at full stride.

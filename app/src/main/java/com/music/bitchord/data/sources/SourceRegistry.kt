@@ -54,7 +54,7 @@ data class SourceConfig(
 ) {
     /** Whether this source is shut out right now because it needs an output that isn't connected. */
     val awaitsLosslessOutput: Boolean
-        get() = checkValidLossless && !LosslessOutput.capable
+        get() = false
 
     /** The two manifest switches, without the parts of the config the user set. */
     internal fun withPolicyOf(other: SourceConfig) =
@@ -103,6 +103,12 @@ object SourceRegistry {
      * tracks instead of re-probing on every resolve.
      */
     private var instances: Map<String, MusicSource> = emptyMap()
+    private val readyLatch = java.util.concurrent.CountDownLatch(1)
+
+    fun awaitReady() {
+        if (::prefs.isInitialized) return
+        runCatching { readyLatch.await(5, java.util.concurrent.TimeUnit.SECONDS) }
+    }
 
     fun init(context: Context) {
         // Same repair and degradation as AuthStore; see EncryptedPrefs.
@@ -123,6 +129,7 @@ object SourceRegistry {
                 .putBoolean(KEY_JIOSAAVN_OPT_IN_V1, true)
                 .apply()
         }
+        readyLatch.countDown()
     }
 
     /**
@@ -183,14 +190,16 @@ object SourceRegistry {
      * stream is budgeted further by [activeForPlayback]; downloads deliberately
      * apply no connection-quality ceiling — see [SourceResolver.forDownload].
      */
-    fun active(): List<MusicSource> =
-        enabledConfigs(configs.value)
+    fun active(): List<MusicSource> {
+        awaitReady()
+        return enabledConfigs(configs.value)
             // Not in the walk at all while it would be refused anyway: an addon
             // that asked for a lossless output costs nothing — not even a timed
             // out search — while there isn't one. See [SourceConfig.checkValidLossless].
             .filterNot { it.awaitsLosslessOutput }
             .sortedBy { it.kind.rank }
             .mapNotNull { instances[it.id] }
+    }
 
     /**
      * [active], minus the addons whose manifest said `allowDownloads: 0`. A

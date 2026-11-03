@@ -22,11 +22,13 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.backdrop.Backdrop
+import com.music.bitchord.ui.components.backdrop.BackdropEffectScope
 import com.music.bitchord.ui.components.backdrop.backdrops.LayerBackdrop
 import com.music.bitchord.ui.components.backdrop.drawBackdrop
 import com.music.bitchord.ui.components.backdrop.effects.blur
@@ -59,12 +61,12 @@ internal val LocalGlassExport = compositionLocalOf<LayerBackdrop?> { null }
  */
 fun isGlassSupported(sdkInt: Int = Build.VERSION.SDK_INT): Boolean = sdkInt >= Build.VERSION_CODES.S
 
-/** Apple-matched defaults (Echo's GlassEffectConfig()), fixed rather than user sliders. */
+/** Apple-matched defaults, tuned for buttery smooth framerates and lightweight shader passes. */
 private const val VIBRANCY = 1f
 private const val BLUR_RADIUS_DP = 8f
-private const val LENS_HEIGHT = 0.5f
-private const val LENS_AMOUNT = 0.5f
-private const val LENS_MAX_DP = 48f
+private const val LENS_HEIGHT = 0.38f
+private const val LENS_AMOUNT = 0.35f
+private const val LENS_MAX_DP = 40f
 private const val SURFACE_OPACITY = 0.4f
 
 /**
@@ -89,7 +91,7 @@ private const val GLASS_RESOLUTION_SCALE = 0.33f
  * its edge from [Highlight], and this is that edge for everything that does not.
  */
 internal val GLASS_EDGE_WIDTH = 0.5.dp
-internal val GLASS_EDGE_COLOR = Color.White.copy(alpha = 0.10f)
+internal val GLASS_EDGE_COLOR = Color.White.copy(alpha = 0.07f)
 
 /**
  * Icon and label colour for content sitting on a glass surface.
@@ -136,23 +138,25 @@ fun Modifier.lightweightLiquidGlass(
     fallbackColor: Color,
 ): Modifier {
     val useGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
+    val glassTintOpacity by AppSettings.liquidGlassTint.collectAsStateWithLifecycle()
     val glassTint = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
         Color(0xFFFAFAFA)
     } else {
         Color(0xFF121212)
     }
-    val shapeProvider = ShapeProvider { shape }
+    val shapeProvider = remember(shape) { ShapeProvider { shape } }
+    val highlightLambda = remember { { Highlight.Default } }
 
     return clip(shape)
         .background(
-            color = if (useGlass) glassTint.copy(alpha = SURFACE_OPACITY) else fallbackColor,
+            color = if (useGlass) glassTint.copy(alpha = glassTintOpacity) else fallbackColor,
             shape = shape,
         )
         .then(
             if (useGlass) {
                 HighlightElement(
                     shapeProvider = shapeProvider,
-                    highlight = { Highlight.Default },
+                    highlight = highlightLambda,
                 )
             } else {
                 Modifier
@@ -174,10 +178,11 @@ fun Modifier.lightweightLiquidGlass(
 fun Modifier.liquidGlassRim(shape: CornerBasedShape): Modifier {
     if (!LocalLiquidGlassEnabled.current || !isGlassSupported()) return this
     val shapeProvider = remember(shape) { ShapeProvider { shape } }
+    val highlightLambda = remember { { Highlight.Default } }
     return then(
         HighlightElement(
             shapeProvider = shapeProvider,
-            highlight = { Highlight.Default },
+            highlight = highlightLambda,
         ),
     )
 }
@@ -216,17 +221,16 @@ fun Modifier.liquidGlass(
     val blurPx = with(density) { BLUR_RADIUS_DP.dp.toPx() } * GLASS_RESOLUTION_SCALE
     val lensHeightPx = with(density) { (LENS_HEIGHT * LENS_MAX_DP).dp.toPx() } * GLASS_RESOLUTION_SCALE
     val lensAmountPx = with(density) { (LENS_AMOUNT * LENS_MAX_DP).dp.toPx() } * GLASS_RESOLUTION_SCALE
-    val themeTint = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
-        Color(0xFFFAFAFA)
-    } else {
-        Color(0xFF121212)
-    }
-    val surfaceTintColor = surfaceTint ?: themeTint.copy(alpha = SURFACE_OPACITY)
+    val glassTintOpacity by AppSettings.liquidGlassTint.collectAsStateWithLifecycle()
+    val isLight = MaterialTheme.colorScheme.surface.luminance() > 0.5f
+    val themeTint = if (isLight) Color(0xFFFAFAFA) else Color(0xFF121212)
+    val surfaceTintColor = surfaceTint ?: themeTint.copy(alpha = glassTintOpacity)
 
-    return drawBackdrop(
-        backdrop = backdrop,
-        shape = { shape },
-        effects = {
+    val shapeLambda = remember(shape) { { shape } }
+    val highlightLambda = remember { { Highlight.Default } }
+    val shadowLambda = remember { { Shadow.Default } }
+    val effectsBlock: BackdropEffectScope.() -> Unit = remember(blurPx, lensHeightPx, lensAmountPx) {
+        {
             colorControls(saturation = 1f + 0.5f * VIBRANCY)
             blur(blurPx)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -234,15 +238,24 @@ fun Modifier.liquidGlass(
                     refractionHeight = lensHeightPx,
                     refractionAmount = lensAmountPx,
                     depthEffect = true,
-                    chromaticAberration = true,
+                    chromaticAberration = false,
                 )
             }
-        },
-        highlight = { Highlight.Default },
-        shadow = { Shadow.Default },
-        onDrawSurface = {
+        }
+    }
+    val onDrawSurfaceBlock: DrawScope.() -> Unit = remember(surfaceTintColor) {
+        {
             drawRect(color = surfaceTintColor, size = size)
-        },
+        }
+    }
+
+    return drawBackdrop(
+        backdrop = backdrop,
+        shape = shapeLambda,
+        effects = effectsBlock,
+        highlight = highlightLambda,
+        shadow = shadowLambda,
+        onDrawSurface = onDrawSurfaceBlock,
         exportedBackdrop = exportedBackdrop,
         backdropScale = GLASS_RESOLUTION_SCALE,
     )

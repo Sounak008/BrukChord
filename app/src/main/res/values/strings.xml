@@ -199,8 +199,8 @@
     <string name="convert_to_audio">Convert to audio</string>
     <string name="convert_to_video">Convert to video</string>
     <string name="converting_to_audio">Converting to audio…</string>
-    <string name="replace_video_with_song_title">Replace video with song version</string>
-    <string name="replace_video_with_song_desc">Detects video-only tracks and plays their official song release so lossless audio is available</string>
+    <string name="replace_video_with_song_title" translatable="false">Replace video with song version</string>
+    <string name="replace_video_with_song_desc" translatable="false">Detects video-only tracks and plays their official song release so lossless audio is available</string>
     <string name="revert_to_original">Revert to original</string>
     <string name="upgrade_quality">Upgrade quality</string>
     <string name="dolby_atmos">Dolby Atmos</string>
@@ -361,6 +361,8 @@
     <string name="reduce_dynamic_blur_subtitle">Swaps frosted glass for solid fills across the app</string>
     <string name="liquid_glass">Liquid Glass</string>
     <string name="liquid_glass_subtitle">Real refracting glass on the floating nav bar. Android 12+ only; uses more GPU.</string>
+    <string name="liquid_glass_tint" translatable="false">Liquid Glass Tint</string>
+    <string name="liquid_glass_tint_desc" translatable="false">Adjust glass tint opacity and vibrancy (iOS style)</string>
     <string name="progressive_blur">Progressive Blur</string>
     <string name="liquid_glass_unavailable">Requires Android 12 or newer</string>
     <string name="full_screen_cover_art">Full-screen cover art</string>
@@ -1118,6 +1120,24 @@
     <string name="shelf_listen_again">Listen again</string>
 
     <string name="shelf_mixed_for_you">Made for you</string>
+
+    <string name="sign_in_for_personalised_playlists" translatable="false">Sign in to get personalised playlists</string>
+
+    <string name="personal_mix" translatable="false">Personal Mix</string>
+    <string name="personal_mix_subtitle" translatable="false">Inspired by Auris Flow · Endless mix based on your recent 20 completed tracks</string>
+    <string name="personal_mix_tracks_header" translatable="false">In this mix · %1$d</string>
+    <string name="personal_mix_meta" translatable="false">%1$d tracks</string>
+    <string name="personal_mix_new_mix" translatable="false">New mix</string>
+    <string name="personal_mix_dynamic" translatable="false">Endless mix</string>
+    <string name="personal_mix_growing" translatable="false">Growing as you listen</string>
+    <string name="personal_mix_empty" translatable="false">No completed tracks yet. As you listen to songs completely on YouTube Music, your Personal Mix will automatically build here.</string>
+
+    <string name="moods_mix" translatable="false">Moods</string>
+    <string name="moods_mix_subtitle" translatable="false">Inspired by Auris Flow · Mood mix based on your recent 20 completed tracks</string>
+    <string name="moods_mix_tracks_header" translatable="false">In this mood · %1$d</string>
+    <string name="moods_mix_meta" translatable="false">%1$d tracks</string>
+    <string name="moods_mix_empty" translatable="false">No tracks found for this mood yet. Try another mood or listen to more music to seed your mix.</string>
+
 
     <string name="shelf_similar_to">Similar to %1$s</string>
 

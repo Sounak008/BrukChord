@@ -170,9 +170,9 @@ fun Modifier.iosMenuPanel(
     val shadowed = if (castsShadow) iosMenuShadow() else this
     val surface = if (hazeFrost) {
         val style = remember(colors, fill) { menuFrost(colors.fill, alpha = fill.alpha) }
-        shadowed.clip(IosMenuShape).optimizedHazeEffect(state = hazeState, style = style)
+        shadowed.clip(IosMenuShape).background(fill).optimizedHazeEffect(state = hazeState, style = style)
     } else if (backdropFrost) {
-        shadowed.menuBackdropFrost(backdrop, IosMenuShape, fill)
+        shadowed.clip(IosMenuShape).background(fill).menuBackdropFrost(backdrop, IosMenuShape, fill)
     } else {
         shadowed.clip(IosMenuShape).background(fill)
     }

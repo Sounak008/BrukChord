@@ -99,6 +99,7 @@ fun AccountProfileSelector(
                 .padding(top = 56.dp, start = 20.dp, end = 20.dp)
                 .fillMaxWidth()
                 .clip(shape)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = if (reduceDynamicBlur) 1f else 0.85f))
                 .then(
                     if (reduceDynamicBlur) {
                         Modifier.background(MaterialTheme.colorScheme.surface)

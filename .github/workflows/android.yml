@@ -77,6 +77,12 @@ jobs:
         name: brukchord-wear-prod-release-signed
         path: wearos/build/outputs/apk/prod/release/*.apk
 
+    - name: Upload TV APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: brukchord-tv-prod-release-signed
+        path: tv/build/outputs/apk/prod/release/*.apk
+
     - name: Prepare Release Assets
       id: prepare_release
       run: |
@@ -109,6 +115,22 @@ jobs:
         for apk in wearos/build/outputs/apk/prod/release/*.apk; do
           if [ -f "$apk" ]; then
             cp "$apk" "release-assets/BrukChordWear-v${VERSION}.apk"
+          fi
+        done
+
+        for apk in tv/build/outputs/apk/prod/release/*.apk; do
+          [ -e "$apk" ] || continue
+          filename=$(basename "$apk")
+          if [[ "$filename" == *"universal"* ]]; then
+            cp "$apk" "release-assets/BrukChordTV-v${VERSION}.apk"
+          elif [[ "$filename" == *"arm64-v8a"* ]]; then
+            cp "$apk" "release-assets/BrukChordTV-v${VERSION}_arm64-v8a.apk"
+          elif [[ "$filename" == *"armeabi-v7a"* ]]; then
+            cp "$apk" "release-assets/BrukChordTV-v${VERSION}_armeabi-v7a.apk"
+          elif [[ "$filename" == *"x86_64"* ]]; then
+            cp "$apk" "release-assets/BrukChordTV-v${VERSION}_x86_64.apk"
+          else
+            cp "$apk" "release-assets/${filename}"
           fi
         done
 

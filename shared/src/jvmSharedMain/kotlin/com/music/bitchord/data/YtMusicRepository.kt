@@ -942,6 +942,12 @@ object YtMusicRepository {
 
     private suspend fun libraryItemsPaged(browseId: String): List<ShelfItem> = itemsPaged(browseId, null)
 
+    suspend fun libraryArtists(): Result<List<ShelfItem>> = call("library:artists") {
+        val fromTrackArtists = runCatching { libraryItemsPaged("FEmusic_library_corpus_track_artists") }.getOrDefault(emptyList())
+        if (fromTrackArtists.isNotEmpty()) return@call fromTrackArtists
+        libraryItemsPaged("FEmusic_library_corpus_artists")
+    }
+
     const val MAX_PAGES = 10
 
     /**

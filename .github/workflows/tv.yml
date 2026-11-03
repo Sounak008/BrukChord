@@ -1,4 +1,4 @@
-name: TV
+name: Android TV Release
 
 # The Android TV app builds from the phone app's sources (see tv/README.md), so
 # a change under app/, shared/, sharedUi/ or native/ can break it as easily as

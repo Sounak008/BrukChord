@@ -1064,6 +1064,10 @@ class PlaybackService : MediaLibraryService() {
             val exoPlayer = player ?: return
             if (state == Player.STATE_ENDED) {
                 SleepTimer.cancel()
+                val completedSong = listenBrainzSong ?: exoPlayer.currentMediaItem?.toSong()
+                if (completedSong != null) {
+                    com.music.bitchord.data.personalmix.PersonalMixStore.recordCompleted(completedSong)
+                }
                 // The queue ran dry, so no transition will ever close the last
                 // track out. Without this its history entry keeps whatever
                 // watchtime the 30-second sampler happened to have reported and
@@ -3782,6 +3786,11 @@ class PlaybackService : MediaLibraryService() {
         val prevStart = listenBrainzStartMs
         if (prevSong != null && ended && prevStart > 0L) {
             submitListenBrainzFinished(prevSong, prevStart, listenBrainzDurationMs)
+        }
+        val prevDurationSec = (listenBrainzDurationMs ?: exoPlayer.duration.takeIf { it > 0 })?.let { it / 1000 }
+        val completedListen = ended || (prevDurationSec != null && prevDurationSec > 20 && lastPositionSeconds >= (prevDurationSec * 0.85).toLong())
+        if (prevSong != null && completedListen) {
+            com.music.bitchord.data.personalmix.PersonalMixStore.recordCompleted(prevSong)
         }
         listenBrainzSong = newSong
         listenBrainzStartMs = if (exoPlayer.isPlaying) System.currentTimeMillis() else 0L

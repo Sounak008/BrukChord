@@ -110,6 +110,7 @@ fun LyricsSourcesDialog(
             modifier = Modifier
                 .width(ALERT_WIDTH)
                 .clip(shape)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = if (reduceDynamicBlur) 1f else 0.85f))
                 .then(
                     if (reduceDynamicBlur) {
                         Modifier.background(MaterialTheme.colorScheme.surface)

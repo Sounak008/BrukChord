@@ -50,3 +50,13 @@ AGENTS.md
 
 # Claude Code session files (launch configs, worktrees)
 .claude/
+
+# Local test scratch, dumps and scripts
+dist-server/
+*.dump.xml
+*_dump.xml
+*_screen.png
+screen_*.png
+search_results.png
+start_emulator.bat
+update_home.py

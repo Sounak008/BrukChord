@@ -9,6 +9,8 @@ import org.jetbrains.compose.resources.DrawableResource
 import androidx.compose.foundation.Image
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -46,6 +48,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +65,7 @@ import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Storage
 import com.music.bitchord.ui.icons.BitChordIcons
 import coil3.compose.AsyncImage
@@ -98,6 +103,9 @@ import com.music.bitchord.ui.player.MeshPalette
 private val HOME_TITLE_LIFT = 28.dp
 
 private const val RECENTS_TITLE = "Recents"
+private const val HOME_SHELF_MAX_ITEMS = 15
+private val ShelfCardShape = RoundedCornerShape(12.dp)
+private val ShelfHeroShape = RoundedCornerShape(18.dp)
 private const val RECENT_TRACKS_PER_COLUMN = 4
 
 private fun List<ShelfItem>.playingItemMatcher(song: Song?): (ShelfItem) -> Boolean {
@@ -164,16 +172,32 @@ fun HomeScreen(
     /** Whether the Top Picks and mood artwork may animate — see [LocalArtworkMotion]. */
     artworkMotion: Boolean = true,
 ) {
-    // Top Picks' pictures and motion wait for the feed — see LocalArtworkImages.
+    if (!signedIn) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(contentPadding),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = stringResource(Res.string.sign_in_for_personalised_playlists),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .padding(horizontal = 32.dp)
+                    .then(if (onSignIn != null) Modifier.clickable(onClick = onSignIn) else Modifier),
+            )
+        }
+        return
+    }
+
     val feedReady = state !is UiState.Loading
     CompositionLocalProvider(
         LocalArtworkMotion provides (artworkMotion && feedReady),
         LocalArtworkImages provides feedReady,
     ) {
-    // The loops also hold still while the feed is being scrolled — see
-    // LocalArtworkScrolling for why that is asked rather than provided.
     PausedWhileScrolling(listState) {
-
     PullToRefresh(
         refreshing = refreshing,
         onRefresh = onRefresh,
@@ -246,25 +270,22 @@ fun HomeScreen(
             }
         }
     }
-
     }
     }
 
     if (onLoadMore != null && state is UiState.Success) {
         val loadMore by rememberUpdatedState(onLoadMore)
-        // Re-checked on every layout change, rather than on the rising edge of
-        // "the tail is in view". A page that appends only a shelf or two leaves
-        // the list still near its end, so an edge-triggered effect would never
-        // fire a second time: the feed dead-ended at the bottom with no
-        // skeleton and no request in flight to explain it. Restarting on
-        // [loadingMore] re-checks the moment a page settles, so the next one is
-        // asked for while the tail is still on screen to show it loading.
-        LaunchedEffect(listState, loadingMore) {
-            snapshotFlow {
+        val shouldLoadMore by remember(listState) {
+            derivedStateOf {
                 val layout = listState.layoutInfo
-                (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
-            }.collect { (lastVisible, total) ->
-                if (!loadingMore && total > 0 && lastVisible >= total - 3) loadMore()
+                val total = layout.totalItemsCount
+                val last = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
+                total > 0 && last >= total - 2
+            }
+        }
+        LaunchedEffect(shouldLoadMore, loadingMore) {
+            if (shouldLoadMore && !loadingMore && !listState.isScrollInProgress) {
+                loadMore()
             }
         }
     }
@@ -300,6 +321,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                 )
+            } else if (shelf.layout == ShelfLayout.CIRCLES || shelf.title.equals("Artists", ignoreCase = true)) {
+                ArtistShelf(
+                    shelf = shelf,
+                    onItemClick = openItem,
+                    onItemLongPress = onItemLongPress,
+                )
             } else if (index == 0 && firstIsHero && shelf.layout == ShelfLayout.CARDS) {
                 HeroShelf(
                     shelf = shelf,
@@ -333,23 +360,27 @@ private fun RecentShelf(
     Column(Modifier.padding(bottom = 26.dp)) {
         RecentSectionHeader(title = localizeShelfTitle(shelf.title), subtitle = localizeShelfSubtitle(shelf.subtitle))
         val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
-        BoxWithConstraints {
-            val columnWidth = trackColumnWidth(maxWidth)
-            ShelfRow(
-                contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
-                    Column(Modifier.width(columnWidth)) {
-                        column.forEach { item ->
-                            RecentTrackRow(
-                                item = item,
-                                onClick = { onItemClick(item) },
-                                onLongPress = onItemLongPress?.let { { it(item) } },
-                                isCurrent = isCurrentItem(item),
-                                isPlaying = isCurrentItem(item) && isPlaying,
-                            )
-                        }
+        val density = LocalDensity.current
+        val windowInfo = LocalWindowInfo.current
+        val availableWidth = with(density) { windowInfo.containerSize.width.toDp() }
+        val columnWidth = remember(availableWidth) { trackColumnWidth(availableWidth) }
+        val chunkedItems = remember(shelf.items) {
+            shelf.items.take(16).chunked(RECENT_TRACKS_PER_COLUMN)
+        }
+        ShelfRow(
+            contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(chunkedItems) { column ->
+                Column(Modifier.width(columnWidth)) {
+                    column.forEach { item ->
+                        RecentTrackRow(
+                            item = item,
+                            onClick = { onItemClick(item) },
+                            onLongPress = onItemLongPress?.let { { it(item) } },
+                            isCurrent = isCurrentItem(item),
+                            isPlaying = isCurrentItem(item) && isPlaying,
+                        )
                     }
                 }
             }
@@ -730,27 +761,28 @@ private fun HeroShelf(
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(shelf.title, shelf.subtitle)
         val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
-        // Measured rather than taken as a share of the parent, because the card
-        // has a ceiling as well as a fraction — see [heroCardWidth]. A fixed
-        // width is also the only one of the two the aspect ratio below can turn
-        // into a height, so the card keeps its shape however it was arrived at.
-        BoxWithConstraints {
-            val cardWidth = heroCardWidth(maxWidth)
-            ShelfRow(
-                state = rememberLazyListState(),
-                contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                items(shelf.items) { item ->
-                    HeroCard(
-                        item = item,
-                        onClick = { onItemClick(item) },
-                        onLongPress = onItemLongPress?.let { { it(item) } },
-                        modifier = Modifier.width(cardWidth),
-                        isCurrent = isCurrentItem(item),
-                        isPlaying = isCurrentItem(item) && isPlaying,
-                    )
-                }
+        val density = LocalDensity.current
+        val windowInfo = LocalWindowInfo.current
+        val availableWidth = with(density) { windowInfo.containerSize.width.toDp() }
+        val cardWidth = remember(availableWidth) { heroCardWidth(availableWidth) }
+        val rowState = rememberSaveable(shelf.title, saver = LazyListState.Saver) { LazyListState() }
+        ShelfRow(
+            state = rowState,
+            contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            items(
+                items = shelf.items.take(HOME_SHELF_MAX_ITEMS),
+                key = { it.browseId ?: it.videoId ?: "${shelf.title}_${it.title}" }
+            ) { item ->
+                HeroCard(
+                    item = item,
+                    onClick = { onItemClick(item) },
+                    onLongPress = onItemLongPress?.let { { it(item) } },
+                    modifier = Modifier.width(cardWidth),
+                    isCurrent = isCurrentItem(item),
+                    isPlaying = isCurrentItem(item) && isPlaying,
+                )
             }
         }
     }
@@ -776,12 +808,41 @@ private fun HeroCard(
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .contextClick(onLongPress),
     ) {
-        AsyncImage(
-            model = item.thumbnailUrl.artworkAt(HEADER_ART_PX),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-        )
+        val isPersonalMix = item.browseId == "local:personal_mix" ||
+            item.browseId == "bitchord:personal_mix" ||
+            item.browseId == "personal_mix" ||
+            item.thumbnailUrl == "local:personal_mix" ||
+            item.thumbnailUrl == "local:cover_personal_mix" ||
+            item.title.equals("Personal Mix", ignoreCase = true)
+        val isMoodsMix = item.browseId == "local:moods_mix" ||
+            item.browseId == "bitchord:moods_mix" ||
+            item.browseId == "moods_mix" ||
+            item.thumbnailUrl == "local:moods_mix" ||
+            item.thumbnailUrl == "local:cover_moods_mix" ||
+            item.title.equals("Moods", ignoreCase = true)
+
+        if (isPersonalMix) {
+            Image(
+                painter = painterResource(Res.drawable.cover_personal_mix),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else if (isMoodsMix) {
+            Image(
+                painter = painterResource(Res.drawable.cover_moods_mix),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            AsyncImage(
+                model = item.thumbnailUrl.artworkAt(HEADER_ART_PX),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
         Column(
             modifier = Modifier
@@ -835,12 +896,17 @@ internal fun Shelf(
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(shelf.title, shelf.subtitle)
         val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
+        val rowState = rememberSaveable(shelf.title, saver = LazyListState.Saver) { LazyListState() }
         ShelfRow(
+            state = rowState,
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             leadingCard?.let { card -> item(key = "leading") { card() } }
-            items(shelf.items) { item ->
+            items(
+                items = shelf.items.take(HOME_SHELF_MAX_ITEMS),
+                key = { it.browseId ?: it.videoId ?: "${shelf.title}_${it.title}" }
+            ) { item ->
                 ShelfCard(
                     item = item,
                     onClick = { onItemClick(item) },
@@ -1027,20 +1093,70 @@ internal fun ShelfCard(
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .contextClick(onLongPress),
     ) {
-        when (item.browseId) {
-            "local:downloads" -> {
+        val isPersonalMix = item.browseId == "local:personal_mix" ||
+            item.browseId == "bitchord:personal_mix" ||
+            item.browseId == "personal_mix" ||
+            item.thumbnailUrl == "local:personal_mix" ||
+            item.thumbnailUrl == "local:cover_personal_mix" ||
+            item.title.equals("Personal Mix", ignoreCase = true)
+        val isMoodsMix = item.browseId == "local:moods_mix" ||
+            item.browseId == "bitchord:moods_mix" ||
+            item.browseId == "moods_mix" ||
+            item.thumbnailUrl == "local:moods_mix" ||
+            item.thumbnailUrl == "local:cover_moods_mix" ||
+            item.title.equals("Moods", ignoreCase = true)
+
+        when {
+            isPersonalMix -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(ShelfCardShape)
+                        .thumbnailBorder(ShelfCardShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    Image(
+                        painter = painterResource(Res.drawable.cover_personal_mix),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
+                }
+            }
+            isMoodsMix -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(ShelfCardShape)
+                        .thumbnailBorder(ShelfCardShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    Image(
+                        painter = painterResource(Res.drawable.cover_moods_mix),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
+                }
+            }
+            item.browseId == "local:downloads" -> {
                 val palette = remember { MeshPalette(listOf(Color(0xFF1E3C72), Color(0xFF2A5298))) }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(1f)
-                        .clip(RoundedCornerShape(12.dp)),
+                        .clip(ShelfCardShape),
                     contentAlignment = Alignment.Center,
                 ) {
                     MeshGradientBackground(
                         palette = palette,
                         trackKey = "local:downloads",
-                        continuous = true,
+                        continuous = false,
+                        animated = false,
                         blurRadius = 24.dp,
                     )
                     Icon(
@@ -1051,22 +1167,22 @@ internal fun ShelfCard(
                     )
                 }
             }
-            "local:all" -> ServiceCard(
+            item.browseId == "local:all" -> ServiceCard(
                 colors = listOf(Color(0xFF134E5E), Color(0xFF71B280)),
                 trackKey = "local:all",
                 icon = Icons.Rounded.LibraryMusic,
             )
-            "local:cache" -> ServiceCard(
+            item.browseId == "local:cache" -> ServiceCard(
                 colors = listOf(Color(0xFF42275A), Color(0xFF734B6D)),
                 trackKey = "local:cache",
                 icon = Icons.Rounded.Cached,
             )
-            "local:webdav" -> ServiceCard(
+            item.browseId == "local:webdav" -> ServiceCard(
                 colors = listOf(Color(0xFF3A1C71), Color(0xFFD76D77)),
                 trackKey = "local:webdav",
                 icon = Icons.Rounded.Folder,
             )
-            "local:smb" -> ServiceCard(
+            item.browseId == "local:smb" -> ServiceCard(
                 colors = listOf(Color(0xFF0F2027), Color(0xFF2C5364)),
                 trackKey = "local:smb",
                 icon = Icons.Rounded.Storage,
@@ -1076,14 +1192,14 @@ internal fun ShelfCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .thumbnailBorder(RoundedCornerShape(12.dp))
+                        .clip(ShelfCardShape)
+                        .thumbnailBorder(ShelfCardShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant),
                 ) {
                     AsyncImage(
                         model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
                         contentDescription = null,
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
                     if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
@@ -1120,6 +1236,98 @@ internal fun ShelfCard(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+
+@Composable
+private fun ArtistShelf(
+    shelf: HomeShelf,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)? = null,
+) {
+    Column(Modifier.padding(bottom = 26.dp)) {
+        SectionHeader(shelf.title, shelf.subtitle)
+        val rowState = rememberSaveable(shelf.title, saver = LazyListState.Saver) { LazyListState() }
+        ShelfRow(
+            state = rowState,
+            contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            items(
+                items = shelf.items.take(HOME_SHELF_MAX_ITEMS),
+                key = { it.browseId ?: it.title }
+            ) { item ->
+                ArtistShelfCard(
+                    item = item,
+                    onClick = { onItemClick(item) },
+                    onLongPress = onItemLongPress?.let { { it(item) } },
+                )
+            }
+        }
+    }
+}
+
+private val ARTIST_CARD_SIZE = 104.dp
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ArtistShelfCard(
+    item: ShelfItem,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
+    modifier: Modifier = Modifier.width(ARTIST_CARD_SIZE),
+) {
+    Column(
+        modifier = modifier
+            .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
+            .contextClick(onLongPress),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(ARTIST_CARD_SIZE)
+                .clip(CircleShape)
+                .thumbnailBorder(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            val artUrl = item.thumbnailUrl?.artworkAt(CARD_ART_PX)
+            if (!artUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = artUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(48.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = item.title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            text = stringResource(Res.string.artist),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }

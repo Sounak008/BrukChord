@@ -1,6 +1,9 @@
 package com.music.bitchord.ui
 
 import android.app.Application
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.music.bitchord.R
@@ -15,11 +18,14 @@ import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.home.HomeFeedCache
 import com.music.bitchord.data.TopPicks
 import com.music.bitchord.data.AppleArtistPhotos
 import com.music.bitchord.data.model.ArtistRef
 import com.music.bitchord.data.model.TopPick
 import com.music.bitchord.data.stats.ListeningStats
+import com.music.bitchord.data.stats.ArtistFacts
+import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.stats.ReplayPeriod
 import android.util.Log
 import java.io.File
@@ -107,6 +113,12 @@ import com.music.bitchord.playback.BoundedContextRequests
 import com.music.bitchord.playback.DirectSourceGate
 import com.music.bitchord.playback.contextEntryKey
 import com.music.bitchord.playback.StreamChoice
+import com.music.bitchord.data.personalmix.PersonalMixEngine
+import com.music.bitchord.data.personalmix.PersonalMixRules
+import com.music.bitchord.data.personalmix.PersonalMixStore
+import com.music.bitchord.data.moodsmix.FlowMood
+import com.music.bitchord.data.moodsmix.MoodsMixEngine
+import com.music.bitchord.data.moodsmix.MoodsMixRules
 import com.music.bitchord.ui.screens.CACHE_FOLDER_BROWSE_ID
 import com.music.bitchord.data.LocalGroup
 import com.music.bitchord.data.LocalGroups
@@ -170,6 +182,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _topPicksLoading = MutableStateFlow(false)
     val topPicksLoading: StateFlow<Boolean> = _topPicksLoading.asStateFlow()
     private var topPicksJob: Job? = null
+
+    private val _personalMixQueue = MutableStateFlow<UiState<List<Song>>>(UiState.Loading)
+    val personalMixQueue: StateFlow<UiState<List<Song>>> = _personalMixQueue.asStateFlow()
+    private val _personalMixLoading = MutableStateFlow(false)
+    val personalMixLoading: StateFlow<Boolean> = _personalMixLoading.asStateFlow()
+
+    private val _selectedMood = MutableStateFlow(FlowMood.CHILL)
+    val selectedMood: StateFlow<FlowMood> = _selectedMood.asStateFlow()
+    private val _moodsMixQueue = MutableStateFlow<UiState<List<Song>>>(UiState.Loading)
+    val moodsMixQueue: StateFlow<UiState<List<Song>>> = _moodsMixQueue.asStateFlow()
+    private val _moodsMixLoading = MutableStateFlow(false)
+    val moodsMixLoading: StateFlow<Boolean> = _moodsMixLoading.asStateFlow()
+
+    private val _listenedArtists = MutableStateFlow<List<ShelfItem>>(emptyList())
+    val listenedArtists: StateFlow<List<ShelfItem>> = _listenedArtists.asStateFlow()
 
     private val _explore = MutableStateFlow<UiState<List<MoodGenreSection>>>(UiState.Loading)
     val explore: StateFlow<UiState<List<MoodGenreSection>>> = _explore.asStateFlow()
@@ -1457,17 +1484,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
+        loadCachedListenedArtists()
         startSearchPipeline()
         startSuggestPipeline()
         startTypeaheadMediaPipeline()
         loadHome()
-        // Explore waits for its tab (see [onExploreShown]): its category list
-        // and the dozen-odd artwork browses after it went out at launch with
-        // Home's own requests, to the same host, for a page not yet opened.
         if (_signedIn.value) {
             loadLibrary()
             loadAccount()
             loadPlaylists()
+        }
+        viewModelScope.launch {
+            combine(_library, _history, _home, _signedIn) { _, _, _, signedIn -> signedIn }
+                .collectLatest { signedIn ->
+                    if (signedIn) refreshListenedArtists()
+                }
+        }
+        viewModelScope.launch {
+            AppSettings.onboardingComplete.drop(1).collect { complete ->
+                if (complete) {
+                    loadHome()
+                    if (_signedIn.value) {
+                        loadLibrary()
+                        loadAccount()
+                        loadPlaylists()
+                    }
+                }
+            }
         }
         viewModelScope.launch {
             // drop(1): the current value is just the count so far, not a play.
@@ -1701,26 +1744,44 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadHome() {
+        refreshListenedArtists()
         val identity = listenerKey()
         val generation = homeLoadGeneration.incrementAndGet()
-        _home.value = UiState.Loading
-        homeContinuation = null
-        homeSeenTitles.clear()
+        val inMemory = HomeFeedCache.getMemory(identity)
+        if (inMemory != null && inMemory.shelves.isNotEmpty()) {
+            _home.value = UiState.Success(inMemory.shelves)
+            homeContinuation = inMemory.continuation
+            homeSeenTitles.clear()
+            homeSeenTitles.addAll(inMemory.shelves.map { it.title.lowercase(Locale.ROOT) })
+            _homeRecentlyPlayedLoading.value = false
+            _homePendingShelves.value = 0
+        } else {
+            _home.value = UiState.Loading
+            homeContinuation = null
+            homeSeenTitles.clear()
+            _homeRecentlyPlayedLoading.value = _signedIn.value
+            _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
+        }
         _homeLoadingMore.value = false
-        _homeRecentlyPlayedLoading.value = _signedIn.value
-        // The core feed plus one browse per supplement. Recently played is left
-        // out: it has its own skeleton at the head of the page rather than the
-        // one at the tail.
-        _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
-        // loadTopPicks(identity, rebuild = false)
         viewModelScope.launch {
+            if (_home.value !is UiState.Success) {
+                val diskCached = withContext(Dispatchers.IO) { HomeFeedCache.get(identity) }
+                if (diskCached != null && diskCached.shelves.isNotEmpty() && isCurrentHomeLoad(identity, generation)) {
+                    _home.value = UiState.Success(diskCached.shelves)
+                    homeContinuation = diskCached.continuation
+                    homeSeenTitles.clear()
+                    homeSeenTitles.addAll(diskCached.shelves.map { it.title.lowercase(Locale.ROOT) })
+                    _homeRecentlyPlayedLoading.value = false
+                    _homePendingShelves.value = 0
+                }
+            }
             launch {
                 try {
                     YtMusicRepository.home()
                         .onSuccess { feed ->
                             if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
                             homeContinuation = feed.continuation
-                            publishHomeShelves(feed.shelves)
+                            publishFreshHome(feed.shelves)
                         }
                         .onFailure { failure ->
                             if (isCurrentHomeLoad(identity, generation) && _home.value !is UiState.Success) {
@@ -1859,6 +1920,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun isCurrentHomeLoad(identity: String?, generation: Long) =
         identity == listenerKey() && generation == homeLoadGeneration.get()
 
+    private fun publishFreshHome(shelves: List<HomeShelf>) {
+        val existing = (_home.value as? UiState.Success)?.data.orEmpty()
+        val recents = existing.filter {
+            it.title.equals("Recents", ignoreCase = true) ||
+            it.title.equals("Recently played", ignoreCase = true) ||
+            it.title.equals("Gần đây", ignoreCase = true) ||
+            it.title.equals("最近", ignoreCase = true)
+        }
+        homeSeenTitles.clear()
+        recents.forEach { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
+        val fresh = shelves.filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
+        val combined = recents + fresh
+        val ordered = filterAndOrderHomeShelves(combined)
+        if (ordered.isNotEmpty()) {
+            _home.value = UiState.Success(ordered)
+            viewModelScope.launch {
+                HomeFeedCache.put(listenerKey(), ordered, homeContinuation)
+            }
+        } else if (_home.value !is UiState.Success) {
+            _home.value = UiState.Success(emptyList())
+        }
+    }
+
     private fun publishHomeShelves(shelves: List<HomeShelf>, prepend: Boolean = false) {
         val existing = (_home.value as? UiState.Success)?.data.orEmpty()
         val combined = if (prepend) {
@@ -1875,15 +1959,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             existing + added
         }
         val ordered = filterAndOrderHomeShelves(combined)
-        if (ordered.isNotEmpty()) _home.value = UiState.Success(ordered)
+        if (ordered.isNotEmpty()) {
+            _home.value = UiState.Success(ordered)
+            viewModelScope.launch {
+                HomeFeedCache.put(listenerKey(), ordered, homeContinuation)
+            }
+        } else if (_home.value !is UiState.Success) {
+            _home.value = UiState.Success(emptyList())
+        }
     }
 
     /** Refreshes the core feed without blanking the current Play page first. */
     private suspend fun refreshHome(identity: String?) = coroutineScope {
         val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
-        // Top Picks keeps to its hour; a pull refreshes the feed, not the
-        // picks, unless the hour has already turned over.
-        if (topPicksJob?.isActive != true) loadTopPicks(identity, rebuild = false)
         YtMusicRepository.home().onSuccess { feed ->
             if (identity != listenerKey()) return@onSuccess
             homeContinuation = feed.continuation
@@ -1891,7 +1979,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val shelves = feed.shelves.withoutRepeatsOf(emptyList())
                 .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
             val ordered = filterAndOrderHomeShelves(shelves)
-            if (ordered.isNotEmpty()) _home.value = UiState.Success(ordered)
+            if (ordered.isNotEmpty()) {
+                _home.value = UiState.Success(ordered)
+                viewModelScope.launch {
+                    HomeFeedCache.put(identity, ordered, homeContinuation)
+                }
+            }
         }
         recent?.await()?.onSuccess { shelf ->
             if (identity == listenerKey()) shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
@@ -1917,7 +2010,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     homeContinuation = feed.continuation.takeIf { added.isNotEmpty() }
                     val combined = existing + added
                     val ordered = filterAndOrderHomeShelves(combined)
-                    if (ordered.isNotEmpty()) _home.value = UiState.Success(ordered)
+                    if (ordered.isNotEmpty()) {
+                        _home.value = UiState.Success(ordered)
+                        viewModelScope.launch {
+                            HomeFeedCache.put(identity, ordered, homeContinuation)
+                        }
+                    }
                 }
             }
             if (identity == listenerKey()) _homeLoadingMore.value = false
@@ -3616,6 +3714,307 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         ownershipInFlight.clear()
         _songMenu.value = null
         loadHome()
+    }
+
+    fun loadPersonalMix(forceRebuild: Boolean = false) {
+        if (!forceRebuild) {
+            PersonalMixStore.readSnapshot()?.let { (songs, builtAt) ->
+                if (System.currentTimeMillis() - builtAt < PersonalMixStore.SNAPSHOT_TTL_MS) {
+                    _personalMixQueue.value = UiState.Success(songs)
+                    return
+                }
+            }
+        }
+        newPersonalMix()
+    }
+
+    fun newPersonalMix(limit: Int = PersonalMixRules.INITIAL_TRACKS) {
+        if (_personalMixLoading.value) return
+        viewModelScope.launch {
+            _personalMixLoading.value = true
+            _personalMixQueue.value = UiState.Loading
+            runCatching {
+                val seeds = PersonalMixStore.completedSongs.value
+                PersonalMixEngine.buildInitialQueue(seeds, limit)
+            }.fold(
+                onSuccess = {
+                    _personalMixQueue.value = UiState.Success(it)
+                    PersonalMixStore.saveSnapshot(it)
+                },
+                onFailure = {
+                    _personalMixQueue.value = UiState.Error(it.friendly())
+                },
+            )
+            _personalMixLoading.value = false
+        }
+    }
+
+    fun growPersonalMix(limit: Int = PersonalMixRules.TOPUP_TRACKS) {
+        if (_personalMixLoading.value) return
+        val current = (_personalMixQueue.value as? UiState.Success)?.data.orEmpty()
+        if (current.isEmpty()) {
+            newPersonalMix()
+            return
+        }
+        viewModelScope.launch {
+            _personalMixLoading.value = true
+            runCatching {
+                PersonalMixEngine.growQueue(current, limit)
+            }.onSuccess { updated ->
+                if (updated.isNotEmpty()) {
+                    _personalMixQueue.value = UiState.Success(updated)
+                    PersonalMixStore.saveSnapshot(updated)
+                }
+            }
+            _personalMixLoading.value = false
+        }
+    }
+
+    fun selectMood(mood: FlowMood) {
+        if (_selectedMood.value == mood && _moodsMixQueue.value is UiState.Success) return
+        _selectedMood.value = mood
+        newMoodsMix(mood)
+    }
+
+    fun loadMoodsMix(forceRebuild: Boolean = false) {
+        if (!forceRebuild && _moodsMixQueue.value is UiState.Success) return
+        newMoodsMix(_selectedMood.value)
+    }
+
+    fun newMoodsMix(mood: FlowMood = _selectedMood.value, limit: Int = MoodsMixRules.INITIAL_TRACKS) {
+        if (_moodsMixLoading.value) return
+        viewModelScope.launch {
+            _moodsMixLoading.value = true
+            _moodsMixQueue.value = UiState.Loading
+            runCatching {
+                val seeds = PersonalMixStore.completedSongs.value
+                MoodsMixEngine.buildQueue(mood, seeds, limit)
+            }.fold(
+                onSuccess = {
+                    _moodsMixQueue.value = UiState.Success(it)
+                },
+                onFailure = {
+                    _moodsMixQueue.value = UiState.Error(it.friendly())
+                },
+            )
+            _moodsMixLoading.value = false
+        }
+    }
+
+    fun growMoodsMix(limit: Int = MoodsMixRules.TOPUP_TRACKS) {
+        if (_moodsMixLoading.value) return
+        val current = (_moodsMixQueue.value as? UiState.Success)?.data.orEmpty()
+        if (current.isEmpty()) {
+            newMoodsMix(_selectedMood.value)
+            return
+        }
+        viewModelScope.launch {
+            _moodsMixLoading.value = true
+            runCatching {
+                MoodsMixEngine.growQueue(_selectedMood.value, current, limit)
+            }.onSuccess { updated ->
+                if (updated.isNotEmpty()) {
+                    _moodsMixQueue.value = UiState.Success(updated)
+                }
+            }
+            _moodsMixLoading.value = false
+        }
+    }
+
+    private fun saveCachedListenedArtists(items: List<ShelfItem>) {
+        runCatching<Unit> {
+            val jsonArray = JSONArray()
+            items.forEach { item ->
+                val obj = JSONObject()
+                obj.put("title", item.title)
+                obj.put("subtitle", item.subtitle)
+                obj.put("thumbnailUrl", item.thumbnailUrl)
+                obj.put("browseId", item.browseId)
+                jsonArray.put(obj)
+            }
+            val context: Context = getApplication<Application>()
+            context.getSharedPreferences("bitchord_artists_cache", Context.MODE_PRIVATE)
+                .edit()
+                .putString("cached_listened_artists", jsonArray.toString())
+                .apply()
+        }
+    }
+
+    private fun loadCachedListenedArtists() {
+        runCatching<Unit> {
+            val context: Context = getApplication<Application>()
+            val raw = context.getSharedPreferences("bitchord_artists_cache", Context.MODE_PRIVATE)
+                .getString("cached_listened_artists", null) ?: return@runCatching
+            val jsonArray = JSONArray(raw)
+            val list = mutableListOf<ShelfItem>()
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val thumb: String? = if (obj.isNull("thumbnailUrl")) null else obj.optString("thumbnailUrl").takeIf { it.isNotBlank() }
+                val browse: String? = if (obj.isNull("browseId")) null else obj.optString("browseId").takeIf { it.isNotBlank() }
+                list.add(
+                    ShelfItem(
+                        title = obj.getString("title"),
+                        subtitle = obj.optString("subtitle", "Artist"),
+                        thumbnailUrl = thumb,
+                        videoId = null,
+                        browseId = browse,
+                    )
+                )
+            }
+            if (list.isNotEmpty()) {
+                _listenedArtists.value = list
+            }
+        }
+    }
+
+    fun refreshListenedArtists() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = mutableListOf<ShelfItem>()
+            val seen = mutableSetOf<String>()
+
+            // 1. Check current library state for Artists or Subscriptions
+            val libPage = (_library.value as? UiState.Success)?.data
+            val libraryShelves = libPage?.shelves.orEmpty()
+            val artistsFromLib = libraryShelves.firstOrNull {
+                it.title.equals("Artists", ignoreCase = true) || it.title.equals("Subscriptions", ignoreCase = true)
+            }?.items.orEmpty()
+            artistsFromLib.forEach { item ->
+                val name = item.title.trim()
+                if (name.isNotBlank() && seen.add(name.lowercase(Locale.ROOT))) {
+                    result.add(item)
+                }
+            }
+
+            // 2. If signed in and still under 15, query library artists directly from YouTube Music
+            if (result.size < 15 && _signedIn.value) {
+                val directArtists = YtMusicRepository.libraryArtists().getOrNull().orEmpty()
+                directArtists.forEach { item ->
+                    val name = item.title.trim()
+                    if (name.isNotBlank() && seen.add(name.lowercase(Locale.ROOT))) {
+                        result.add(item)
+                    }
+                }
+            }
+
+            // 3. From YouTube Music listening history
+            val histSongs = (_history.value as? UiState.Success)?.data.orEmpty()
+            histSongs.forEach { song ->
+                val name = song.artist.trim()
+                if (name.isNotBlank() && seen.add(name.lowercase(Locale.ROOT))) {
+                    result.add(
+                        ShelfItem(
+                            title = name,
+                            subtitle = "Artist",
+                            thumbnailUrl = ArtistFacts.imageFor(name) ?: song.thumbnailUrl,
+                            videoId = null,
+                            browseId = ArtistFacts.browseIdFor(name),
+                        )
+                    )
+                }
+            }
+
+            // 4. From ListeningStats
+            val stats = runCatching { ListeningStats.summary(ReplayPeriod.ALL_TIME) }.getOrNull()
+            stats?.artists?.forEach { entry ->
+                val name = entry.title.trim()
+                if (name.isNotBlank() && seen.add(name.lowercase(Locale.ROOT))) {
+                    val art = entry.artworkUrl ?: ArtistFacts.imageFor(name)
+                    val bId = entry.browseId ?: ArtistFacts.browseIdFor(name)
+                    result.add(
+                        ShelfItem(
+                            title = name,
+                            subtitle = "Artist",
+                            thumbnailUrl = art,
+                            videoId = null,
+                            browseId = bId,
+                        )
+                    )
+                }
+            }
+
+            // 5. From PersonalMixStore completed songs
+            PersonalMixStore.completedSongs.value.forEach { song ->
+                val name = song.artist.trim()
+                if (name.isNotBlank() && seen.add(name.lowercase(Locale.ROOT))) {
+                    val art = ArtistFacts.imageFor(name) ?: song.thumbnailUrl
+                    val bId = ArtistFacts.browseIdFor(name)
+                    result.add(
+                        ShelfItem(
+                            title = name,
+                            subtitle = "Artist",
+                            thumbnailUrl = art,
+                            videoId = null,
+                            browseId = bId,
+                        )
+                    )
+                }
+            }
+
+            // 6. From Home shelves (Quick picks, Similar to, etc.) if still under 15
+            if (result.size < 15) {
+                val homeShelves = (_home.value as? UiState.Success)?.data.orEmpty()
+                homeShelves.forEach { shelf ->
+                    if (shelf.title.startsWith("similar to", ignoreCase = true)) {
+                        val aName = shelf.title.substringAfter("similar to", "").trim()
+                        if (aName.isNotBlank() && seen.add(aName.lowercase(Locale.ROOT))) {
+                            result.add(
+                                ShelfItem(
+                                    title = aName,
+                                    subtitle = "Artist",
+                                    thumbnailUrl = ArtistFacts.imageFor(aName) ?: shelf.items.firstOrNull()?.thumbnailUrl,
+                                    videoId = null,
+                                    browseId = ArtistFacts.browseIdFor(aName),
+                                )
+                            )
+                        }
+                    }
+                    shelf.items.forEach { item ->
+                        val rawArtist = if (item.subtitle.isNotBlank()) item.subtitle else item.title
+                        val artistName = InnertubeParser.artistFromSubtitle(rawArtist).trim()
+                        val lower = artistName.lowercase(Locale.ROOT)
+                        if (artistName.isNotBlank() && lower !in listOf("song", "album", "video", "ep", "single") && seen.add(lower)) {
+                            result.add(
+                                ShelfItem(
+                                    title = artistName,
+                                    subtitle = "Artist",
+                                    thumbnailUrl = ArtistFacts.imageFor(artistName) ?: item.thumbnailUrl,
+                                    videoId = null,
+                                    browseId = ArtistFacts.browseIdFor(artistName),
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 7. From YouTube Music recently played if still under 15
+            if (result.size < 15) {
+                val recents = runCatching { YtMusicRepository.homeRecentlyPlayed().getOrNull() }.getOrNull()
+                recents?.items?.forEach { item ->
+                    val rawArtist = if (item.subtitle.isNotBlank()) item.subtitle else item.title
+                    val artistName = InnertubeParser.artistFromSubtitle(rawArtist).trim()
+                    if (artistName.isNotBlank() && seen.add(artistName.lowercase(Locale.ROOT))) {
+                        val art = ArtistFacts.imageFor(artistName) ?: item.thumbnailUrl
+                        val bId = ArtistFacts.browseIdFor(artistName)
+                        result.add(
+                            ShelfItem(
+                                title = artistName,
+                                subtitle = "Artist",
+                                thumbnailUrl = art,
+                                videoId = null,
+                                browseId = bId,
+                            )
+                        )
+                    }
+                }
+            }
+
+            if (result.isNotEmpty()) {
+                val finalItems = result.take(15)
+                _listenedArtists.value = finalItems
+                saveCachedListenedArtists(finalItems)
+            }
+        }
     }
 
     private fun Throwable.friendly(): String = when {

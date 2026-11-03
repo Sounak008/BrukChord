@@ -59,11 +59,22 @@ internal object EncryptedPrefs {
         return encrypted
     }
 
+    @Volatile
+    private var cachedMasterKey: MasterKey? = null
+
+    private fun getMasterKey(context: Context): MasterKey {
+        return cachedMasterKey ?: synchronized(this) {
+            cachedMasterKey ?: MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build().also { cachedMasterKey = it }
+        }
+    }
+
     private fun create(context: Context, name: String): SharedPreferences =
         EncryptedSharedPreferences.create(
             context,
             name,
-            MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+            getMasterKey(context),
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         )

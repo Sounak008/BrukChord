@@ -26,11 +26,13 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpOffset
@@ -41,6 +43,7 @@ import com.music.bitchord.ui.components.backdrop.backdrops.LayerBackdrop
 import com.music.bitchord.ui.components.backdrop.drawBackdrop
 import com.music.bitchord.ui.components.backdrop.effects.lens
 import com.music.bitchord.ui.components.backdrop.highlight.Highlight
+import com.music.bitchord.ui.components.backdrop.highlight.HighlightStyle
 import com.music.bitchord.ui.components.backdrop.shadow.Shadow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -50,31 +53,15 @@ import kotlin.math.roundToInt
 import kotlin.math.sign
 
 /** How much taller than the bar the pill stands while it is lifted. */
-internal val PILL_GROW_HEIGHT = 9.dp
+internal val PILL_GROW_HEIGHT = 4.dp
 
 /**
  * The selection pill's physics, owned by the tab bar and handed to whichever
  * pill is drawing it.
  *
- * A tap lifts the pill at once — it inflates past the bar on two
- * under-damped springs, one per axis, so it overshoots its raised size and
- * rebounds — and it stays up for the whole journey. The travel is its own
- * spring. Only once the pill has landed ([HANDOVER_START] of the way there) is
- * the lift released, so it deflates where it stands, dipping a little under
- * its resting size and coming back. A drag is the same lift held open by a
- * finger.
- *
- * Along the way the pill's drawn position is sampled every frame and
- * differentiated twice: it stretches wide and flat as it launches, squashes
- * narrow and tall as it brakes, and is undeformed at constant speed. A travel
- * keeps one sense of that deformation for the whole trip, keyed to where it is
- * going; a finger keeps the raw force.
- *
- * The glass is a third, much faster spring, so the pill reads as glass almost
- * as soon as it is touched, and sheds it ([glassPresence]) from the landing
- * while the size is still settling. Once nothing is left to see, [isFlat]
- * flips and the plain pill takes over — two identical pictures, so there is
- * nothing to cross-fade.
+ * Tuned for snappy, immediate transitions when tapping another tab:
+ * quick critically-damped travel spring, subtle lift, and allocation-free
+ * dynamics.
  *
  * Positions are in tab steps: `0` is the first tab, `1` the second.
  */
@@ -251,7 +238,7 @@ internal class GlassPillMotion(
 
     /** One frame of everything. False once all of it has settled. */
     private fun tick(dt: Double, now: Double): Boolean {
-        // 1) Travel.
+        // 1) Travel: snappy, critically-damped spring.
         var travelSettled = true
         if (travelActive) {
             val r = springStep(travelPos, travelVel, travelTarget, dt, TRAVEL_STIFFNESS, TRAVEL_DAMPING)
@@ -355,23 +342,23 @@ internal class GlassPillMotion(
     }
 
     private companion object {
-        const val TRAVEL_STIFFNESS = 280.0
-        const val TRAVEL_DAMPING = 31.4
+        const val TRAVEL_STIFFNESS = 480.0
+        const val TRAVEL_DAMPING = 42.0
 
-        /** Damping ratio 0.6 across, 0.7 down, so width overshoots a shade further. */
-        const val LIFT_STIFFNESS = 250.0
-        const val LIFT_DAMPING_X = 19.0
-        const val LIFT_DAMPING_Y = 22.1
+        /** Damping ratio 0.85 across, 0.9 down: snappy and responsive. */
+        const val LIFT_STIFFNESS = 420.0
+        const val LIFT_DAMPING_X = 35.0
+        const val LIFT_DAMPING_Y = 38.0
 
-        /** Critically damped and four times as stiff: the glass is on long before the size settles. */
-        const val MATERIAL_STIFFNESS = 1000.0
-        const val MATERIAL_DAMPING = 63.3
+        /** Critically damped: the glass is on swiftly and sheds promptly. */
+        const val MATERIAL_STIFFNESS = 1400.0
+        const val MATERIAL_DAMPING = 74.0
 
-        const val HANDOVER_START = 0.92
-        const val HANDOVER_TAU = 0.09
-        const val GLASS_RETURN_TAU = 0.05
-        const val FOLLOW_TAU = 0.05
-        const val SIGN_TAU = 0.25
+        const val HANDOVER_START = 0.85
+        const val HANDOVER_TAU = 0.045
+        const val GLASS_RETURN_TAU = 0.035
+        const val FOLLOW_TAU = 0.04
+        const val SIGN_TAU = 0.18
 
         /** Semi-implicit Euler in 1/240 s substeps, so a long frame cannot blow it up. */
         fun springStep(
@@ -411,69 +398,73 @@ internal class GlassPillMotion(
 }
 
 /**
- * Acceleration to deformation: the pill's position over a short window,
- * differentiated twice and averaged, scaled and clamped, then eased so a
- * single noisy frame cannot flick it. Tuned in dp/s².
+ * Acceleration to deformation: samples the pill's position into a fixed ring
+ * buffer without per-frame allocations, differentiated and eased.
  */
 private class PillSquashModel {
-    private val history = ArrayList<Pair<Double, Double>>()
+    private companion object {
+        const val MAX_SAMPLES = 8
+        const val SAMPLE_WINDOW = 0.25
+        const val SENSITIVITY = 0.00007
+        const val MAX_DEFORMATION = 0.08
+        const val RESPONSE_TIME = 0.12
+    }
+
+    private val xHistory = DoubleArray(MAX_SAMPLES)
+    private val tHistory = DoubleArray(MAX_SAMPLES)
+    private var count = 0
+    private var head = 0
     var isTracking = false
         private set
     private var value = 0.0
 
     fun start() {
-        history.clear()
+        count = 0
+        head = 0
         value = 0.0
         isTracking = true
     }
 
     fun stop() {
         isTracking = false
-        history.clear()
+        count = 0
+        head = 0
         value = 0.0
     }
 
     fun track(x: Double, now: Double, dt: Double): Double {
         if (!isTracking) return value
-        history.add(x to now)
-        val cutoff = now - SAMPLE_WINDOW
-        history.removeAll { it.second < cutoff }
-        val raw = (averageAcceleration() * SENSITIVITY).coerceIn(-MAX_DEFORMATION, MAX_DEFORMATION)
+        xHistory[head] = x
+        tHistory[head] = now
+        head = (head + 1) % MAX_SAMPLES
+        if (count < MAX_SAMPLES) count++
+
+        val raw = (calculateAcceleration(now) * SENSITIVITY).coerceIn(-MAX_DEFORMATION, MAX_DEFORMATION)
         val ease = (dt / RESPONSE_TIME).coerceIn(0.0, 1.0)
         value += (raw - value) * ease
         return value
     }
 
-    private fun averageAcceleration(): Double {
-        if (history.size < 3) return 0.0
-        val velocities = ArrayList<Pair<Double, Double>>(history.size)
-        for (i in 1 until history.size) {
-            val dt = history[i].second - history[i - 1].second
-            if (dt <= 0) continue
-            velocities.add(
-                (history[i].first - history[i - 1].first) / dt to
-                    (history[i].second + history[i - 1].second) / 2,
-            )
-        }
-        if (velocities.size < 2) return 0.0
-        var total = 0.0
-        var count = 0
-        for (i in 1 until velocities.size) {
-            val dt = velocities[i].second - velocities[i - 1].second
-            if (dt <= 0) continue
-            total += (velocities[i].first - velocities[i - 1].first) / dt
-            count++
-        }
-        return if (count == 0) 0.0 else total / count
-    }
+    private fun calculateAcceleration(now: Double): Double {
+        if (count < 3) return 0.0
+        val cutoff = now - SAMPLE_WINDOW
 
-    private companion object {
-        const val SAMPLE_WINDOW = 0.3
-        const val SENSITIVITY = 0.00007
+        val p2 = (head - 1 + MAX_SAMPLES) % MAX_SAMPLES
+        val p1 = (head - 2 + MAX_SAMPLES) % MAX_SAMPLES
+        val p0 = (head - 3 + MAX_SAMPLES) % MAX_SAMPLES
 
-        /** ±12 %: the pill travels inside the bar, and more would climb out of it. */
-        const val MAX_DEFORMATION = 0.12
-        const val RESPONSE_TIME = 0.18
+        if (tHistory[p0] < cutoff) return 0.0
+
+        val dt1 = tHistory[p1] - tHistory[p0]
+        val dt2 = tHistory[p2] - tHistory[p1]
+        if (dt1 <= 0.0 || dt2 <= 0.0) return 0.0
+
+        val v1 = (xHistory[p1] - xHistory[p0]) / dt1
+        val v2 = (xHistory[p2] - xHistory[p1]) / dt2
+        val dtMid = (dt1 + dt2) * 0.5
+        if (dtMid <= 0.0) return 0.0
+
+        return (v2 - v1) / dtMid
     }
 }
 
@@ -509,11 +500,8 @@ internal fun FlatSelectionPill(
  * The lifted pill: a lens over the tab bar that refracts the bar's own glass
  * and its tab row, drawn above both and free to stand past the bar's edges.
  *
- * Clear while it is lifted — the selection fill fades out as the material
- * comes on and back in as it goes — with a rim and a contact shadow that are
- * the first things shed on landing, and refraction that eases out behind them.
- * At the end of that it is drawing the bar, the fill and the tabs with no lens,
- * which is exactly what [FlatSelectionPill] under the tabs draws.
+ * Rendered with an optimized single-pass refraction shader and softened
+ * highlight reflection for fluid 120Hz frame rates.
  */
 @Composable
 internal fun GlassSelectionPill(
@@ -530,26 +518,43 @@ internal fun GlassSelectionPill(
             fillColor.copy(alpha = fillColor.alpha * (1f - motion.material))
         }
     }
+    val shapeLambda = remember { { shape } }
+    val pillHighlight = remember {
+        Highlight(
+            width = 0.5.dp,
+            alpha = 0.65f,
+            style = HighlightStyle.Default(
+                color = Color.White.copy(alpha = 0.30f),
+                blendMode = BlendMode.Plus,
+                angle = 45f,
+                falloff = 1.3f,
+            ),
+        )
+    }
+    val density = LocalDensity.current
+    val lensHeightPx = with(density) { LENS_HEIGHT.toPx() }
+    val lensAmountPx = with(density) { LENS_AMOUNT.toPx() }
+
     Box(
         modifier.drawBackdrop(
             backdrop = backdrop,
-            shape = { shape },
+            shape = shapeLambda,
             effects = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     lens(
-                        refractionHeight = LENS_HEIGHT.toPx() * motion.glassPresence,
-                        refractionAmount = LENS_AMOUNT.toPx() * motion.material,
-                        chromaticAberration = true,
+                        refractionHeight = lensHeightPx * motion.glassPresence,
+                        refractionAmount = lensAmountPx * motion.material,
+                        chromaticAberration = false,
                     )
                 }
             },
             highlight = {
                 val alpha = motion.material * rimOf(motion.glassPresence)
-                if (alpha > 0f) Highlight.Default.copy(alpha = alpha) else null
+                if (alpha > 0.01f) pillHighlight.copy(alpha = pillHighlight.alpha * alpha) else null
             },
             shadow = {
                 val alpha = motion.material * rimOf(motion.glassPresence)
-                if (alpha > 0f) PILL_SHADOW.copy(alpha = alpha) else null
+                if (alpha > 0.01f) PILL_SHADOW.copy(alpha = PILL_SHADOW.alpha * alpha) else null
             },
         ),
     )
@@ -558,13 +563,13 @@ internal fun GlassSelectionPill(
 /** The rim and its shadow are gone by the time the hand-off is 55% through. */
 private fun rimOf(presence: Float): Float = ((presence - 0.45f) / 0.55f).coerceIn(0f, 1f)
 
-private val LENS_HEIGHT = 12.dp
-private val LENS_AMOUNT = 14.dp
+private val LENS_HEIGHT = 7.dp
+private val LENS_AMOUNT = 8.dp
 
 private val PILL_SHADOW = Shadow(
-    radius = 12.dp,
-    offset = DpOffset(0.dp, 2.dp),
-    color = Color.Black.copy(alpha = 0.3f),
+    radius = 6.dp,
+    offset = DpOffset(0.dp, 1.5.dp),
+    color = Color.Black.copy(alpha = 0.18f),
 )
 
 /**

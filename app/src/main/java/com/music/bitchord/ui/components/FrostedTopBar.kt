@@ -530,12 +530,8 @@ private fun artworkPageSurface(
         .clip(shape)
         .then(
             when {
-                useLiquidGlass -> Modifier.liquidGlass(shape)
-                reduceDynamicBlur || hazeState == null -> Modifier.background(container)
-                else -> Modifier.optimizedHazeEffect(
-                    state = hazeState,
-                    style = HazeMaterials.regular(container),
-                )
+                useLiquidGlass && !reduceDynamicBlur -> Modifier.liquidGlass(shape)
+                else -> Modifier.background(container)
             },
         )
         // Keep the same explicit hairline as FloatingBottomBar. Liquid glass

@@ -375,7 +375,7 @@ internal fun LibraryGridShelf(
             horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING),
         ) {
             leadingCard?.let { card -> item(key = "leading") { card() } }
-            items(visibleItems) { item ->
+            items(visibleItems, key = { it.browseId ?: (it.title + it.subtitle) }) { item ->
                 ShelfCard(
                     item = item,
                     onClick = { onItemClick(item) },

@@ -135,6 +135,7 @@
     <string name="personal_phone">%1$s’s Phone</string>
     <string name="this_phone">This phone</string>
     <string name="albums">Albums</string>
+    <string name="artist">Artist</string>
     <string name="artists">Artists</string>
     <string name="card_plays_format">%1$s plays</string>
     <string name="card_songs_format">%1$s songs</string>
@@ -181,6 +182,12 @@
     <string name="shelf_hits_today">Hits today</string>
     <string name="shelf_listen_again">Listen again</string>
     <string name="shelf_mixed_for_you">Made for you</string>
+    <string name="sign_in_for_personalised_playlists">Sign in to get personalised playlists</string>
+    <string name="personal_mix">Personal Mix</string>
+    <string name="personal_mix_subtitle">Dynamic endless playlist based on your recent listening</string>
+    <string name="moods_mix">Moods</string>
+    <string name="moods_mix_subtitle">Personalized mix for every vibe</string>
+
     <string name="shelf_new_releases">New releases</string>
     <string name="shelf_quick_picks">Quick picks</string>
     <string name="shelf_recents">Recents</string>

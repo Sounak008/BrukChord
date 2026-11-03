@@ -52,10 +52,10 @@ interface HighlightStyle {
 
     @Immutable
     data class Default(
-        override val color: Color = Color.White.copy(alpha = 0.5f),
+        override val color: Color = Color.White.copy(alpha = 0.35f),
         override val blendMode: BlendMode = BlendMode.Plus,
         val angle: Float = 45f,
-        @param:FloatRange(from = 0.0) val falloff: Float = 1f
+        @param:FloatRange(from = 0.0) val falloff: Float = 1.25f
     ) : HighlightStyle {
 
         override fun DrawScope.createShader(

@@ -198,6 +198,12 @@ object AudioCache {
     const val QUEUE_DEPTH = QUEUE_LOOKAHEAD + 1
 
     private lateinit var cache: SimpleCache
+    private val readyLatch = java.util.concurrent.CountDownLatch(1)
+
+    fun awaitReady() {
+        if (::cache.isInitialized) return
+        runCatching { readyLatch.await(5, java.util.concurrent.TimeUnit.SECONDS) }
+    }
 
     private lateinit var appContext: Context
 
@@ -265,6 +271,7 @@ object AudioCache {
                 evictor.applyNow(cache)
             }
         }
+        readyLatch.countDown()
     }
 
     /**
@@ -846,6 +853,7 @@ object AudioCache {
      * [SimpleCache], which goes on believing in them until it next reads one.
      */
     suspend fun cachedSongs(): List<CachedSong> = withContext(Dispatchers.IO) {
+        awaitReady()
         if (!::cache.isInitialized) return@withContext emptyList()
         class Entry(
             val origin: Origin,
@@ -1184,6 +1192,7 @@ object AudioCache {
      * Local file and content URIs bypass disk caching to prevent redundant writes.
      */
     fun playbackFactory(upstream: DataSource.Factory): DataSource.Factory = DataSource.Factory {
+        awaitReady()
         val cacheDs = cacheFactory(upstream).createDataSource()
         val upstreamDs = upstream.createDataSource()
         object : DataSource {

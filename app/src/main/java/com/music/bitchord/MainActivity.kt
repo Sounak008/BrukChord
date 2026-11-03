@@ -256,6 +256,7 @@ import com.music.bitchord.ui.components.BottomTab
 import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
 import com.music.bitchord.ui.components.FloatingBottomBar
 import com.music.bitchord.ui.components.GlassNavBar
+import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarInlineBehavior
 import com.music.bitchord.ui.components.floatingtabbar.rememberFloatingTabBarScrollConnection
 import com.music.bitchord.ui.components.FrostedTopBar
 import com.music.bitchord.ui.components.LastfmLoginAlert
@@ -295,6 +296,16 @@ import com.music.bitchord.ui.components.FieldConfig
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.personalmix.PersonalMixRules
+import com.music.bitchord.data.moodsmix.MoodsMixRules
+import com.music.bitchord.data.stats.ArtistFacts
+import com.music.bitchord.data.model.isArtistsShelf
+import com.music.bitchord.data.model.isMadeForYouShelf
+import com.music.bitchord.data.model.isQuickPicksShelf
+import com.music.bitchord.data.model.isRecentsOrListenAgainShelf
+import com.music.bitchord.data.model.ShelfLayout
+import com.music.bitchord.ui.screens.PersonalMixScreen
+import com.music.bitchord.ui.screens.MoodsMixScreen
 import com.music.bitchord.data.TopPicks
 import com.music.bitchord.data.model.TopPick
 import com.music.bitchord.data.model.TopPickKind
@@ -387,6 +398,8 @@ internal fun shouldSkipAfterDislike(
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        val tMainCreate = android.os.SystemClock.elapsedRealtime()
+        android.util.Log.i("BitChordStartup", "MainActivity.onCreate start: t=" + tMainCreate)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // Before the composition, so a cold launch from a widget's artwork has
@@ -396,11 +409,12 @@ class MainActivity : AppCompatActivity() {
         // Likewise for a link tapped or shared from another app — see [MusicLink].
         MusicLink.consume(intent)
         setContent {
+            val tCompose = android.os.SystemClock.elapsedRealtime()
+            android.util.Log.i("BitChordStartup", "MainActivity setContent compose start: delta=" + (tCompose - tMainCreate) + "ms")
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
             val appFont by AppSettings.appFont.collectAsStateWithLifecycle()
             val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
             val liquidGlassEnabled by AppSettings.liquidGlass.collectAsStateWithLifecycle()
-            val iosOverscrollFactory = rememberIosOverscrollFactory()
             val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
             val composeView = LocalView.current
             LaunchedEffect(highPerformance, performanceRefreshRate, composeView) {
@@ -430,7 +444,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 val appBackdrop = rememberLayerBackdrop(onDraw = paintBackdrop)
                 CompositionLocalProvider(
-                    LocalOverscrollFactory provides iosOverscrollFactory,
                     LocalLiquidGlassEnabled provides liquidGlassEnabled,
                     LocalAppBackdrop provides appBackdrop,
                 ) {
@@ -474,8 +487,9 @@ class MainActivity : AppCompatActivity() {
      * resolution. Android may still lower it for temperature, battery state or
      * hardware limits, which is why Settings describes this as a preference.
      */
-    private fun applyPerformanceMode(enabled: Boolean, refreshRate: Int, composeView: View) {
-        val supportedRefreshRate = composeView.display.resolvePerformanceRefreshRate(refreshRate)
+    private fun applyPerformanceMode(enabled: Boolean, refreshRate: Int, composeView: View) = runCatching {
+        val display = composeView.display ?: runCatching { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else @Suppress("DEPRECATION") windowManager.defaultDisplay }.getOrNull()
+        val supportedRefreshRate = display.resolvePerformanceRefreshRate(refreshRate)
         window.attributes = window.attributes.apply {
             preferredRefreshRate = if (enabled) supportedRefreshRate.toFloat() else 0f
         }
@@ -487,7 +501,7 @@ class MainActivity : AppCompatActivity() {
                 View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT
             }
         }
-    }
+    }.onFailure { android.util.Log.w("PerformanceMode", "Failed to apply performance mode", it) }
 
     /**
      * The other half of the relay. This activity is `singleTask`, so once it is
@@ -541,7 +555,8 @@ private fun BitChordApp(
     // What folds [GlassNavBar] between its expanded and inline shapes. Held here
     // rather than inside the bar because the page's scroll is what drives it,
     // and the page is a sibling of the bar rather than a child.
-    val navBarScroll = rememberFloatingTabBarScrollConnection()
+    // Fixed as two-liner without collapsing inline on scroll to eliminate transition stutter.
+    val navBarScroll = rememberFloatingTabBarScrollConnection(inlineBehavior = FloatingTabBarInlineBehavior.Never)
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     // Explore loads the first time it's shown, not at launch beside Home.
     LaunchedEffect(selectedTab) {
@@ -823,11 +838,136 @@ private fun BitChordApp(
         dark = !darkTheme && !showNowPlaying && route != AppRoute.Replay && replayStory == null && !onboardingVisible,
     )
 
+    val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
     val homeState by viewModel.home.collectAsStateWithLifecycle()
     val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
     val homeRecentlyPlayedLoading by viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
     val topPicks by viewModel.topPicks.collectAsStateWithLifecycle()
     val topPicksLoading by viewModel.topPicksLoading.collectAsStateWithLifecycle()
+
+    val personalMixQueue by viewModel.personalMixQueue.collectAsStateWithLifecycle()
+    val personalMixLoading by viewModel.personalMixLoading.collectAsStateWithLifecycle()
+    val personalMixListState = rememberLazyListState()
+    val personalMixTitle = stringResource(R.string.personal_mix)
+    val personalMixSubtitle = stringResource(R.string.personal_mix_subtitle)
+
+    val moodsMixQueue by viewModel.moodsMixQueue.collectAsStateWithLifecycle()
+    val moodsMixLoading by viewModel.moodsMixLoading.collectAsStateWithLifecycle()
+    val selectedMood by viewModel.selectedMood.collectAsStateWithLifecycle()
+    val moodsMixListState = rememberLazyListState()
+    val moodsMixTitle = stringResource(R.string.moods_mix)
+    val moodsMixSubtitle = stringResource(R.string.moods_mix_subtitle)
+    val listenedArtists by viewModel.listenedArtists.collectAsStateWithLifecycle()
+
+    val homeWithPersonalMix = remember(homeState, signedIn, personalMixTitle, personalMixSubtitle, moodsMixTitle, moodsMixSubtitle, listenedArtists) {
+        if (!signedIn) return@remember homeState
+        val base = (homeState as? UiState.Success)?.data ?: return@remember homeState
+        val withoutArtists = base.filterNot { isArtistsShelf(it.title) || it.layout == ShelfLayout.CIRCLES }
+        val madeForYouIndex = withoutArtists.indexOfFirst { isMadeForYouShelf(it.title) }
+        val personalMixItem = ShelfItem(
+            title = personalMixTitle,
+            subtitle = personalMixSubtitle,
+            thumbnailUrl = "local:cover_personal_mix",
+            videoId = null,
+            browseId = PersonalMixRules.PERSONAL_MIX_BROWSE_ID,
+        )
+        val moodsMixItem = ShelfItem(
+            title = moodsMixTitle,
+            subtitle = moodsMixSubtitle,
+            thumbnailUrl = "local:cover_moods_mix",
+            videoId = null,
+            browseId = MoodsMixRules.MOODS_MIX_BROWSE_ID,
+        )
+
+        val madeForYouShelf = if (madeForYouIndex >= 0) {
+            val existing = withoutArtists[madeForYouIndex]
+            val filtered = existing.items.filterNot {
+                it.browseId == PersonalMixRules.PERSONAL_MIX_BROWSE_ID ||
+                    it.browseId == MoodsMixRules.MOODS_MIX_BROWSE_ID
+            }
+            existing.copy(
+                title = "Mixed for you",
+                items = listOf(personalMixItem, moodsMixItem) + filtered,
+            )
+        } else {
+            HomeShelf(
+                title = "Mixed for you",
+                items = listOf(personalMixItem, moodsMixItem),
+                layout = ShelfLayout.CARDS,
+            )
+        }
+
+        // Effective artists: from state flow or extracted from home shelves
+        val effectiveArtists = if (listenedArtists.isNotEmpty()) {
+            listenedArtists
+        } else {
+            val extracted = mutableListOf<ShelfItem>()
+            val seen = mutableSetOf<String>()
+            withoutArtists.forEach { shelf ->
+                if (shelf.title.startsWith("similar to", ignoreCase = true)) {
+                    val aName = shelf.title.substringAfter("similar to", "").trim()
+                    if (aName.isNotBlank() && seen.add(aName.lowercase(Locale.ROOT))) {
+                        extracted.add(
+                            ShelfItem(
+                                title = aName,
+                                subtitle = "Artist",
+                                thumbnailUrl = ArtistFacts.imageFor(aName) ?: shelf.items.firstOrNull()?.thumbnailUrl,
+                                videoId = null,
+                                browseId = ArtistFacts.browseIdFor(aName),
+                            )
+                        )
+                    }
+                }
+                shelf.items.forEach { item ->
+                    val rawArtist = if (item.subtitle.isNotBlank()) item.subtitle else item.title
+                    val aName = InnertubeParser.artistFromSubtitle(rawArtist).trim()
+                    val lower = aName.lowercase(Locale.ROOT)
+                    if (aName.isNotBlank() && lower !in listOf("song", "album", "video", "ep", "single") && seen.add(lower)) {
+                        extracted.add(
+                            ShelfItem(
+                                title = aName,
+                                subtitle = "Artist",
+                                thumbnailUrl = ArtistFacts.imageFor(aName) ?: item.thumbnailUrl,
+                                videoId = null,
+                                browseId = ArtistFacts.browseIdFor(aName),
+                            )
+                        )
+                    }
+                }
+            }
+            extracted.take(15)
+        }
+
+        val artistsShelf = if (effectiveArtists.isNotEmpty()) {
+            HomeShelf(
+                title = "Artists",
+                subtitle = "",
+                items = effectiveArtists,
+                layout = ShelfLayout.CIRCLES,
+            )
+        } else null
+
+        // Order shelves strictly:
+        // 1. Recents / Listen again (if present)
+        // 2. Mixed for you (containing Personal Mix & Moods Mix)
+        // 3. Artists (kept between Mixed for you and Quick picks)
+        // 4. Quick picks
+        // 5. Remaining algorithmic shelves
+        val recents = withoutArtists.firstOrNull { isRecentsOrListenAgainShelf(it.title) }
+        val quickPicks = withoutArtists.firstOrNull { isQuickPicksShelf(it.title) }
+        val others = withoutArtists.filterNot {
+            it === recents || isMadeForYouShelf(it.title) || it === quickPicks
+        }
+
+        val ordered = mutableListOf<HomeShelf>()
+        recents?.let { ordered.add(it) }
+        ordered.add(madeForYouShelf)
+        artistsShelf?.let { ordered.add(it) }
+        quickPicks?.let { ordered.add(it) }
+        ordered.addAll(others)
+
+        UiState.Success(ordered)
+    }
 
     // The top bar's icon is the quiet, always-there nudge; this is the
     // once-per-launch popup version of the same news. `updateDialogShown`
@@ -868,7 +1008,6 @@ private fun BitChordApp(
         metered = AppSettings.meteredConnection.collectAsStateWithLifecycle().value,
         override = AppSettings.streamCeilingOverride.collectAsStateWithLifecycle().value,
     )
-    val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
     val incomingJamInvite by JamInviteLink.pending.collectAsStateWithLifecycle()
     var activeJamInviteCode by rememberSaveable { mutableStateOf<String?>(null) }
     var activeJamInviteServer by rememberSaveable { mutableStateOf<String?>(null) }
@@ -2722,7 +2861,11 @@ private fun BitChordApp(
                         replayLandingPage = ReplayStoryPage.INTRO
                         navigator.push(AppRoute.Replay)
                     }
-                    PlaybackSourceType.EXPLORE -> selectedTab = TAB_EXPLORE
+                    PlaybackSourceType.EXPLORE -> if (sourceId == PersonalMixRules.PERSONAL_MIX_BROWSE_ID) {
+                        navigator.push(AppRoute.PersonalMix)
+                    } else {
+                        selectedTab = TAB_EXPLORE
+                    }
                     PlaybackSourceType.SHARED_LINK -> {
                         val id = sourceId ?: return@openSource
                         context.startActivity(
@@ -2866,22 +3009,9 @@ private fun BitChordApp(
                     modifier = Modifier
                         .hazeSource(hazeState)
                         .then(
-                            if (glassActive) {
+                            if (glassSamplesBackdrop) {
                                 Modifier
-                                    // Not under "reduce dynamic blur": nothing
-                                    // samples the layer then, and recording a
-                                    // whole page into one for no reader is the
-                                    // cost that setting exists to remove.
-                                    .then(
-                                        if (glassSamplesBackdrop) {
-                                            Modifier.layerBackdrop(appBackdrop)
-                                        } else {
-                                            Modifier
-                                        },
-                                    )
-                                    // Every page's scroll passes through here, so
-                                    // the glass bar collapses on all of them
-                                    // without each one having to know about it.
+                                    .layerBackdrop(appBackdrop)
                                     .nestedScroll(navBarScroll)
                             } else {
                                 Modifier
@@ -2931,6 +3061,86 @@ private fun BitChordApp(
                                 onSongSwipe = onSongSwipe,
                                 onRetry = viewModel::loadHistory,
                                 contentPadding = listPadding,
+                            )
+                        } else if (pageRoute == AppRoute.PersonalMix) {
+                            LaunchedEffect(Unit) {
+                                viewModel.loadPersonalMix(forceRebuild = false)
+                            }
+                            PersonalMixScreen(
+                                tracksState = personalMixQueue,
+                                rebuilding = personalMixLoading,
+                                isGrowing = true,
+                                listState = personalMixListState,
+                                onPlay = {
+                                    val songs = (personalMixQueue as? UiState.Success)?.data.orEmpty()
+                                    if (songs.isNotEmpty()) {
+                                        playFrom(songs, 0, QueueSource(context.getString(R.string.personal_mix), PlaybackSourceType.EXPLORE))
+                                    }
+                                },
+                                onShuffle = {
+                                    val songs = (personalMixQueue as? UiState.Success)?.data.orEmpty()
+                                    if (songs.isNotEmpty()) {
+                                        playFrom(songs.shuffled(), 0, QueueSource(context.getString(R.string.personal_mix), PlaybackSourceType.EXPLORE))
+                                    }
+                                },
+                                onNewMix = { viewModel.newPersonalMix() },
+                                onToggleLike = {
+                                    player.song?.let { viewModel.toggleLike(it.videoId) }
+                                },
+                                currentLiked = player.song?.let {
+                                    likeStatuses[it.videoId] == LikeStatus.LIKE
+                                } == true,
+                                onSongClick = { songs, index ->
+                                    if (index >= songs.size - 5) viewModel.growPersonalMix()
+                                    playFrom(songs, index, QueueSource(context.getString(R.string.personal_mix), PlaybackSourceType.EXPLORE))
+                                },
+                                onSongLongPress = openSongMenu,
+                                onSongSwipe = onSongSwipe,
+                                onRetry = { viewModel.loadPersonalMix(forceRebuild = true) },
+                                contentPadding = listPadding,
+                                currentSong = player.song,
+                                isPlaying = player.isPlaying,
+                            )
+                        } else if (pageRoute == AppRoute.MoodsMix) {
+                            LaunchedEffect(Unit) {
+                                viewModel.loadMoodsMix(forceRebuild = false)
+                            }
+                            MoodsMixScreen(
+                                tracksState = moodsMixQueue,
+                                selectedMood = selectedMood,
+                                onMoodSelected = viewModel::selectMood,
+                                rebuilding = moodsMixLoading,
+                                isGrowing = true,
+                                listState = moodsMixListState,
+                                onPlay = {
+                                    val songs = (moodsMixQueue as? UiState.Success)?.data.orEmpty()
+                                    if (songs.isNotEmpty()) {
+                                        playFrom(songs, 0, QueueSource(context.getString(R.string.moods_mix), PlaybackSourceType.EXPLORE))
+                                    }
+                                },
+                                onShuffle = {
+                                    val songs = (moodsMixQueue as? UiState.Success)?.data.orEmpty()
+                                    if (songs.isNotEmpty()) {
+                                        playFrom(songs.shuffled(), 0, QueueSource(context.getString(R.string.moods_mix), PlaybackSourceType.EXPLORE))
+                                    }
+                                },
+                                onNewMix = { viewModel.newMoodsMix(selectedMood) },
+                                onToggleLike = {
+                                    player.song?.let { viewModel.toggleLike(it.videoId) }
+                                },
+                                currentLiked = player.song?.let {
+                                    likeStatuses[it.videoId] == LikeStatus.LIKE
+                                } == true,
+                                onSongClick = { songs, index ->
+                                    if (index >= songs.size - 5) viewModel.growMoodsMix()
+                                    playFrom(songs, index, QueueSource(context.getString(R.string.moods_mix), PlaybackSourceType.EXPLORE))
+                                },
+                                onSongLongPress = openSongMenu,
+                                onSongSwipe = onSongSwipe,
+                                onRetry = { viewModel.loadMoodsMix(forceRebuild = true) },
+                                contentPadding = listPadding,
+                                currentSong = player.song,
+                                isPlaying = player.isPlaying,
                             )
                         } else if (pageRoute is AppRoute.LibraryShowAll) {
                             pageRoute.shelf.let { shelf ->
@@ -3344,7 +3554,7 @@ private fun BitChordApp(
                             )
                         } else when ((destination as? AppDestination.Tab)?.index ?: selectedTab) {
                             TAB_HOME -> HomeScreen(
-                                state = homeState,
+                                state = homeWithPersonalMix,
                                 listState = homeListState,
                                 currentSong = player.song,
                                 isPlaying = player.isPlaying,
@@ -3358,6 +3568,36 @@ private fun BitChordApp(
                                     // property declared in another module.
                                     val browseId = item.browseId
                                     when {
+                                        browseId == PersonalMixRules.PERSONAL_MIX_BROWSE_ID -> {
+                                            navigator.push(AppRoute.PersonalMix)
+                                        }
+                                        browseId == MoodsMixRules.MOODS_MIX_BROWSE_ID -> {
+                                            navigator.push(AppRoute.MoodsMix)
+                                        }
+                                        shelfTitle.equals("Artists", ignoreCase = true) || item.subtitle.equals("Artist", ignoreCase = true) -> {
+                                            if (browseId != null) {
+                                                viewModel.openDetail(
+                                                    browseId = browseId,
+                                                    title = item.title,
+                                                    subtitle = context.getString(R.string.artist),
+                                                    thumbnailUrl = item.thumbnailUrl,
+                                                    type = BrowseType.ARTIST,
+                                                )
+                                            } else {
+                                                scope.launch {
+                                                    val found = YtMusicRepository.findArtistPageId(item.title).getOrNull()
+                                                    if (found != null) {
+                                                        viewModel.openDetail(
+                                                            browseId = found,
+                                                            title = item.title,
+                                                            subtitle = context.getString(R.string.artist),
+                                                            thumbnailUrl = item.thumbnailUrl,
+                                                            type = BrowseType.ARTIST,
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
                                         song != null -> playRadio(
                                             song,
                                             QueueSource(shelfTitle, PlaybackSourceType.HOME),
@@ -3765,6 +4005,8 @@ private fun BitChordApp(
                         is AppRoute.SettingsChoice -> stringResource(route.choice.title)
                         AppRoute.EqualizerPresets -> stringResource(R.string.equalizer_preset)
                         AppRoute.Replay -> stringResource(R.string.replay)
+                        AppRoute.PersonalMix -> stringResource(R.string.personal_mix)
+                        AppRoute.MoodsMix -> stringResource(R.string.moods_mix)
                         null -> when {
                             detail != null && detailActiveShelf != null -> detailActiveShelf?.title.orEmpty()
                             detail != null -> detail.title
@@ -5261,6 +5503,8 @@ private fun BitChordApp(
                 tween<IntOffset>(durationMillis = 560, easing = OnboardingDismissEasing),
             ) { it },
         ) {
+            val tOnboarding = android.os.SystemClock.elapsedRealtime()
+            android.util.Log.i("BitChordStartup", "OnboardingScreen composed at " + tOnboarding)
             OnboardingScreen(
                 signedIn = signedIn,
                 initialName = remember {
@@ -5268,7 +5512,10 @@ private fun BitChordApp(
                 },
                 onNameChosen = ListenTogether::setNickname,
                 onSignIn = { webSession = WebSessionMode.SIGN_IN },
-                onFinish = AppSettings::setOnboardingComplete,
+                onFinish = {
+                    AppSettings.setOnboardingComplete()
+                    viewModel.loadHome()
+                },
             )
         }
 
@@ -6015,9 +6262,10 @@ private fun FrostedMenuPanel(
                 .padding(top = 56.dp, end = 20.dp)
                 .width(IntrinsicSize.Max)
                 .clip(shape)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = if (reduceDynamicBlur) 1f else 0.85f))
                 .then(
                     if (reduceDynamicBlur) {
-                        Modifier.background(MaterialTheme.colorScheme.surface)
+                        Modifier
                     } else {
                         Modifier.optimizedHazeEffect(
                             state = hazeState,
