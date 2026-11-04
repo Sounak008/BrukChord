@@ -1107,6 +1107,9 @@
 
     <string name="advanced_options">Advanced &amp; experimental options</string>
 
+    <string name="artist_circles_personally_listened" translatable="false">Personally listened artist circles</string>
+    <string name="artist_circles_personally_listened_subtitle" translatable="false">Open your personally listened library songs when tapping artist circles on the home screen instead of the main artist page</string>
+
     <string name="lyrics_debug_logs">Lyrics debug logs</string>
 
     <string name="lyrics_debug_logs_subtitle">Show live API queries and scraper activity in the lyrics panel</string>

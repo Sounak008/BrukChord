@@ -116,7 +116,7 @@ android {
         create("dev") {
             dimension = "env"
             applicationId = "com.dev.brukchord"
-            resValue("string", "app_name", "BrukChord")
+            resValue("string", "app_name", "BrukDev")
         }
         create("prod") {
             dimension = "env"

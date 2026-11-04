@@ -3575,25 +3575,78 @@ private fun BitChordApp(
                                             navigator.push(AppRoute.MoodsMix)
                                         }
                                         shelfTitle.equals("Artists", ignoreCase = true) || item.subtitle.equals("Artist", ignoreCase = true) -> {
-                                            if (browseId != null) {
-                                                viewModel.openDetail(
-                                                    browseId = browseId,
-                                                    title = item.title,
-                                                    subtitle = context.getString(R.string.artist),
-                                                    thumbnailUrl = item.thumbnailUrl,
-                                                    type = BrowseType.ARTIST,
-                                                )
+                                            val personallyListenedMode = AppSettings.artistCirclesPersonallyListened.value
+                                            if (personallyListenedMode) {
+                                                if (browseId != null) {
+                                                    viewModel.openDetail(
+                                                        browseId = browseId,
+                                                        title = item.title,
+                                                        subtitle = context.getString(R.string.artist),
+                                                        thumbnailUrl = item.thumbnailUrl,
+                                                        type = BrowseType.ARTIST,
+                                                    )
+                                                } else {
+                                                    scope.launch {
+                                                        val found = YtMusicRepository.findArtistPageId(item.title).getOrNull()
+                                                        if (found != null) {
+                                                            ArtistFacts.rememberBrowseId(item.title, found)
+                                                            viewModel.openDetail(
+                                                                browseId = found,
+                                                                title = item.title,
+                                                                subtitle = context.getString(R.string.artist),
+                                                                thumbnailUrl = item.thumbnailUrl,
+                                                                type = BrowseType.ARTIST,
+                                                            )
+                                                        }
+                                                    }
+                                                }
                                             } else {
-                                                scope.launch {
-                                                    val found = YtMusicRepository.findArtistPageId(item.title).getOrNull()
-                                                    if (found != null) {
+                                                if (browseId != null && browseId.startsWith("UC")) {
+                                                    viewModel.openDetail(
+                                                        browseId = browseId,
+                                                        title = item.title,
+                                                        subtitle = context.getString(R.string.artist),
+                                                        thumbnailUrl = item.thumbnailUrl,
+                                                        type = BrowseType.ARTIST,
+                                                    )
+                                                } else {
+                                                    val cachedUcId = ArtistFacts.browseIdFor(item.title)?.takeIf { it.startsWith("UC") }
+                                                    if (cachedUcId != null) {
                                                         viewModel.openDetail(
-                                                            browseId = found,
+                                                            browseId = cachedUcId,
                                                             title = item.title,
                                                             subtitle = context.getString(R.string.artist),
                                                             thumbnailUrl = item.thumbnailUrl,
                                                             type = BrowseType.ARTIST,
                                                         )
+                                                    } else {
+                                                        scope.launch {
+                                                            val found = YtMusicRepository.findArtistPageId(item.title).getOrNull()
+                                                            if (found != null) {
+                                                                ArtistFacts.rememberBrowseId(item.title, found)
+                                                                viewModel.openDetail(
+                                                                    browseId = found,
+                                                                    title = item.title,
+                                                                    subtitle = context.getString(R.string.artist),
+                                                                    thumbnailUrl = item.thumbnailUrl,
+                                                                    type = BrowseType.ARTIST,
+                                                                )
+                                                            } else if (browseId != null) {
+                                                                viewModel.openDetail(
+                                                                    browseId = browseId,
+                                                                    title = item.title,
+                                                                    subtitle = context.getString(R.string.artist),
+                                                                    thumbnailUrl = item.thumbnailUrl,
+                                                                    type = BrowseType.ARTIST,
+                                                                )
+                                                            } else {
+                                                                Toast.makeText(
+                                                                    context,
+                                                                    context.getString(R.string.couldnt_find, item.title),
+                                                                    Toast.LENGTH_SHORT,
+                                                                ).show()
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }

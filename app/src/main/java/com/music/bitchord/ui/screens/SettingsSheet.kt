@@ -287,6 +287,7 @@ fun SettingsScreen(
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
     val smartVersionAlignment by AppSettings.smartVersionAlignment.collectAsStateWithLifecycle()
     val autoReplaceVideoWithAudio by AppSettings.autoReplaceVideoWithAudio.collectAsStateWithLifecycle()
+    val artistCirclesPersonallyListened by AppSettings.artistCirclesPersonallyListened.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val highPerformanceMode by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
@@ -1554,6 +1555,21 @@ fun SettingsScreen(
         }
 
         if (shows(SettingsCategory.ADVANCED)) SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {
+            val artistCirclesPersonallyListenedTitle = stringResource(R.string.artist_circles_personally_listened)
+            row(artistCirclesPersonallyListenedTitle, "artist", "circles", "homepage", "home", "personally", "listened", "library", "mode") {
+                SettingsRow(
+                    icon = SfIcons.Artist,
+                    title = artistCirclesPersonallyListenedTitle,
+                    subtitle = stringResource(R.string.artist_circles_personally_listened_subtitle),
+                    trailing = {
+                        IosSwitch(
+                            checked = artistCirclesPersonallyListened,
+                            onCheckedChange = AppSettings::setArtistCirclesPersonallyListened,
+                        )
+                    },
+                    onClick = { AppSettings.setArtistCirclesPersonallyListened(!artistCirclesPersonallyListened) },
+                )
+            }
             val smartAlignmentTitle = stringResource(R.string.smart_version_alignment)
             row(smartAlignmentTitle, "alignment", "sync", "waveform", "video", "audio", "skit", "intro") {
                 SettingsRow(

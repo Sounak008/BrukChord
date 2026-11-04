@@ -143,6 +143,16 @@ object ArtistFacts {
     /** The artist's page, so a chart row opens it without searching first. */
     fun browseIdFor(artist: String): String? = known[key(artist)]?.browseId
 
+    /** Caches the artist's page id once known, avoiding repeated search round-trips. */
+    fun rememberBrowseId(artist: String, browseId: String) {
+        if (!ready) return
+        val k = key(artist)
+        if (k.isEmpty()) return
+        val entry = known[k] ?: StoredArtist(key = k)
+        known[k] = entry.copy(browseId = browseId)
+        dirty = true
+    }
+
     /**
      * An artist was played. Looks them up if anything about them is missing.
      *

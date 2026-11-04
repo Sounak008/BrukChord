@@ -673,11 +673,12 @@ object YtMusicRepository {
     suspend fun findArtistPageId(name: String): Result<String?> = call("artistByName:$name") {
         if (normalizedArtistName(name).isEmpty()) return@call null
         val filter = SearchFilter.ARTISTS
-        InnertubeParser.parseSearchPage(Innertube.search(name, filter.params)).rows
+        val artistRows = InnertubeParser.parseSearchPage(Innertube.search(name, filter.params)).rows
             .filterIsInstance<SearchResult.Browse>()
             .map { it.item }
-            .firstOrNull { it.type == BrowseType.ARTIST && isExactArtistMatch(it.title, name) }
-            ?.browseId
+            .filter { it.type == BrowseType.ARTIST }
+        artistRows.firstOrNull { isExactArtistMatch(it.title, name) }?.browseId
+            ?: artistRows.firstOrNull()?.browseId
     }
 
     /**

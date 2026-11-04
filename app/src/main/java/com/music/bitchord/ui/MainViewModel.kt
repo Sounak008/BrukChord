@@ -3882,6 +3882,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val name = item.title.trim()
                 if (name.isNotBlank() && seen.add(name.lowercase(Locale.ROOT))) {
                     result.add(item)
+                    ArtistFacts.noticed(name)
                 }
             }
 
@@ -3892,6 +3893,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     val name = item.title.trim()
                     if (name.isNotBlank() && seen.add(name.lowercase(Locale.ROOT))) {
                         result.add(item)
+                        ArtistFacts.noticed(name)
                     }
                 }
             }

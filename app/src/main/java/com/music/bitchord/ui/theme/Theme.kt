@@ -23,8 +23,12 @@ import com.music.bitchord.data.settings.AppFont
 // spots (Replay's rank badge) that want that specific red regardless of theme.
 val AccentRed = Color(0xFFFA2D48)
 
+// Electric Jade — Apple Music-style vibrant accent color.
+val AccentJade = Color(0xFF00E599)
+val AccentJadeLight = Color(0xFF00A862)
+
 private val DarkColors = darkColorScheme(
-    primary = Color.White,
+    primary = AccentJade,
     onPrimary = Color.Black,
     background = Color.Black,
     onBackground = Color.White,
@@ -36,7 +40,7 @@ private val DarkColors = darkColorScheme(
 )
 
 private val LightColors = lightColorScheme(
-    primary = Color.Black,
+    primary = AccentJadeLight,
     onPrimary = Color.White,
     background = Color.White,
     onBackground = Color.Black,
