@@ -89,7 +89,8 @@
     <string name="lyrics_provider_not_found">Không tìm thấy lời bài hát</string>
     <string name="lyrics_romanization_unavailable">Không thể chuyển lời bài hát này sang chữ Latinh</string>
     <string name="lyrics_romanized">Phiên âm Latinh</string>
-    <string name="lyrics_saved_with_download">Lời bài hát được lưu kèm bản tải này</string>
+    <string name="local_lyrics">Lời bài hát cục bộ</string>
+    <string name="lyrics_saved_with_download">Lời bài hát cục bộ</string>
     <string name="lyrics_share_pick_limit">Thẻ đã đầy</string>
     <string name="lyrics_translated_to">Translated to %1$s</string>
     <string name="lyrics_translation_unavailable">Translation is unavailable right now</string>

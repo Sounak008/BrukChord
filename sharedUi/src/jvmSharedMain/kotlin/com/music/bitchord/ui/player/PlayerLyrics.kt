@@ -3269,7 +3269,7 @@ internal fun rememberLyricsTranslation(
         lyricsSource != null -> stringResource(Res.string.lyrics_by, lyricsSource.label)
         lyricsUnavailable -> stringResource(Res.string.no_lyrics_found)
         lyrics.isNullOrEmpty() -> loadingText
-        else -> stringResource(Res.string.lyrics_saved_with_download)
+        else -> stringResource(Res.string.local_lyrics)
     }
 
     return LyricsTranslationUi(

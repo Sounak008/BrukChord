@@ -89,7 +89,8 @@
     <string name="lyrics_provider_not_found">लिरिक्स नहीं मिले</string>
     <string name="lyrics_romanization_unavailable">इन लिरिक्स के लिए रोमन रूप उपलब्ध नहीं है</string>
     <string name="lyrics_romanized">रोमन उच्चारण</string>
-    <string name="lyrics_saved_with_download">इस डाउनलोड के साथ लिरिक्स सेव किए गए</string>
+    <string name="local_lyrics">लोकल लिरिक्स</string>
+    <string name="lyrics_saved_with_download">लोकल लिरिक्स</string>
     <string name="lyrics_share_pick_limit">कार्ड भर चुका है</string>
     <string name="lyrics_translated_to">%1$s में अनुवादित</string>
     <string name="lyrics_translation_unavailable">अनुवाद अभी उपलब्ध नहीं है</string>

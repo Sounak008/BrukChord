@@ -89,7 +89,8 @@
     <string name="lyrics_provider_not_found">No se encontró la letra</string>
     <string name="lyrics_romanization_unavailable">La romanización no está disponible para esta letra</string>
     <string name="lyrics_romanized">Pronunciación romanizada</string>
-    <string name="lyrics_saved_with_download">Letra guardada con esta descarga</string>
+    <string name="local_lyrics">Letra local</string>
+    <string name="lyrics_saved_with_download">Letra local</string>
     <string name="lyrics_share_pick_limit">La tarjeta está llena</string>
     <string name="lyrics_translated_to">Traducida al %1$s</string>
     <string name="lyrics_translation_unavailable">La traducción no está disponible ahora</string>

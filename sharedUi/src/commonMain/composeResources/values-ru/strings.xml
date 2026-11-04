@@ -89,7 +89,8 @@
     <string name="lyrics_provider_not_found">Текст не найден</string>
     <string name="lyrics_romanization_unavailable">Транслитерация недоступна для этого текста</string>
     <string name="lyrics_romanized">Произношение латиницей</string>
-    <string name="lyrics_saved_with_download">Текст сохранён вместе с этой загрузкой</string>
+    <string name="local_lyrics">Локальный текст</string>
+    <string name="lyrics_saved_with_download">Локальный текст</string>
     <string name="lyrics_share_pick_limit">Карточка заполнена</string>
     <string name="lyrics_translated_to">Переведено на %1$s</string>
     <string name="lyrics_translation_unavailable">Перевод сейчас недоступен</string>

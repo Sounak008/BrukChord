@@ -89,7 +89,8 @@
     <string name="lyrics_provider_not_found">Sözler bulunamadı</string>
     <string name="lyrics_romanization_unavailable">Bu sözler için Latin harflerine çevirme kullanılamıyor</string>
     <string name="lyrics_romanized">Latin harfleriyle okunuş</string>
-    <string name="lyrics_saved_with_download">Sözler bu indirmeyle kaydedildi</string>
+    <string name="local_lyrics">Yerel Sözler</string>
+    <string name="lyrics_saved_with_download">Yerel Sözler</string>
     <string name="lyrics_share_pick_limit">Kart dolu</string>
     <string name="lyrics_translated_to">%1$s diline çevrildi</string>
     <string name="lyrics_translation_unavailable">Çeviri şu anda kullanılamıyor</string>
