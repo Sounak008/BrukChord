@@ -112,6 +112,11 @@ fun TvNowPlayingScreen(
             artist = song.artist,
             durationMs = durationMs.coerceAtLeast(0L),
             album = song.albumName,
+            // A file on the device carries its own lyrics, and reads them from
+            // beside itself when it cannot; a TV's USB library is all local.
+            localUri = song.localUri
+                ?: com.music.bitchord.download.Downloads.verifiedSavedUri(song.videoId),
+            localPath = song.localPath,
         )
     }
 

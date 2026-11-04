@@ -1313,7 +1313,11 @@ private fun BitChordApp(
                 // the lyrics of a paused track loading until it was played.
                 player.durationMs.takeIf { ms -> ms > 0L } ?: it.durationMillis(),
                 it.albumName,
-                it.localUri,
+                // A track queued before its download finished carries no local
+                // URI of its own; the record still knows the file is there, and
+                // that is what the lyrics reader needs to look beside it.
+                it.localUri ?: Downloads.verifiedSavedUri(it.videoId),
+                it.localPath,
             )
         }
     }

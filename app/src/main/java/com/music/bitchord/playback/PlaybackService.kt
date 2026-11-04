@@ -1760,10 +1760,17 @@ class PlaybackService : MediaLibraryService() {
             DefaultDataSource.Factory(this, resolvingFactory),
         )
         AudioCache.setUpstream(defaultDataSourceFactory)
+        // Local-first sits *outside* the cache, so a downloaded file is swapped
+        // in before [AudioCache.playbackFactory] chooses between the cache and
+        // the plain upstream. Swapping inside it would hand the cache a
+        // `bitchord://` uri and write the whole local file into the disk cache
+        // under the stream's key — the duplicate copy its local-scheme bypass
+        // exists to prevent.
+        val playbackFactory = LocalFirstDataSource.Factory(AudioCache.playbackFactory(defaultDataSourceFactory))
         // DsdExtractorsFactory: the stock extractors plus DSF/DFF, which Media3
         // cannot open at all. A DSD file leaves the extractor as float PCM.
         mediaSourceFactory = DefaultMediaSourceFactory(
-            AudioCache.playbackFactory(defaultDataSourceFactory),
+            playbackFactory,
             DsdExtractorsFactory(),
         )
             .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())
@@ -2029,7 +2036,8 @@ class PlaybackService : MediaLibraryService() {
         if (!AppSettings.syncedLyrics.value) return null
         val song = item.toSong()
         return kotlinx.coroutines.withTimeoutOrNull(LOOP_MIX_LYRICS_TIMEOUT_MS) {
-            song.localUri?.let { EmbeddedLyrics.forUri(this@PlaybackService, it) }
+            (song.localUri ?: resolveLocalUri(song.videoId, item)?.toString())
+                ?.let { EmbeddedLyrics.forUri(this@PlaybackService, it, song.localPath) }
                 ?: LyricsRepository.lyrics(
                     videoId = song.videoId,
                     title = song.title,
@@ -4534,6 +4542,13 @@ class PlaybackService : MediaLibraryService() {
     private fun lookForBetterCopy(player: ExoPlayer) {
         val item = player.currentMediaItem ?: return
         val mediaId = item.mediaId
+        // A downloaded track is already the best copy this app has: it is the
+        // file, and [adoptCachedTrack] refuses to replace it. This is the same
+        // answer for the entry that was queued before the download finished,
+        // whose URI still names a stream — [LocalFirstDataSource] plays the
+        // file underneath it, so looking for an upgrade to that stream would
+        // undo the swap a second into the song.
+        if (Downloads.localPlaybackUri(mediaId) != null) return
         val uri = item.localConfiguration?.uri
         val alreadyPending = QualityUpgrade.isPending(mediaId)
         val shelved = QualityUpgrade.shelvedFor(mediaId)
@@ -7781,10 +7796,16 @@ class PlaybackService : MediaLibraryService() {
 
         serviceLyricsJob?.cancel()
         serviceLyricsJob = scope.launch(Dispatchers.IO) {
+            // A track queued before its download finished has no local URI in
+            // its extras; the download record still resolves the file, and
+            // reading it is the whole difference between showing the lyrics
+            // offline and going to the network for them.
             val localUri = currentSong.localUri
+                ?: player?.currentMediaItem?.let { resolveLocalUri(currentSong.videoId, it) }
+                    ?.toString()
             var lines: List<LyricLine>? = null
             if (localUri != null) {
-                lines = EmbeddedLyrics.forUri(this@PlaybackService, localUri)
+                lines = EmbeddedLyrics.forUri(this@PlaybackService, localUri, currentSong.localPath)
             }
             if (lines == null) {
                 val found = LyricsRepository.lyrics(

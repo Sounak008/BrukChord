@@ -2,47 +2,61 @@ package com.music.bitchord.data.lyrics
 
 import android.content.Context
 import android.net.Uri
+import android.provider.MediaStore
 import com.music.bitchord.data.DebugLog as Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
+import java.util.Locale
 
 /**
- * The lyrics already sitting inside a downloaded file.
+ * The lyrics already sitting inside a downloaded or local file.
  *
  * The read side of what the download path wrote — see `MediaTagger`, and the
- * three taggers under it. A track that was downloaded had its lyrics fetched
- * once, at download time, and written into the file; asking four servers for
- * them again every time it is played is a network round trip to arrive at a
- * string that is already on disk, and it is the reason a downloaded song showed
- * nothing at all with the connection off.
+ * three taggers under it — as well as files the listener put on their device.
+ * A track that was downloaded had its lyrics fetched once, at download time,
+ * and written into the file; asking network servers for them again every time
+ * it is played is a round trip to arrive at a string already on disk.
  *
- * Two fields are read, in this order:
+ * Multiple fields and formats are supported, with preference given to
+ * word-by-word synchronised lyrics over plain lines:
  *
- *  - `BITCHORD_LYRICS`, this app's own, holding the "enhanced" A2 form with the
- *    word timings intact — see [toEnhancedLrc].
- *  - the container's standard lyrics field, holding plain `[mm:ss.xx]` LRC.
+ *  - `BITCHORD_LYRICS`, this app's own, holding the enhanced A2 form with word
+ *    timings intact — see [toEnhancedLrc].
+ *  - `SYNCEDLYRICS` / `LYRICS_SYNCED`, the standard tag used by Picard,
+ *    MusicBee, LRCGet, and other desktop music taggers.
+ *  - ID3 `SYLT`, the standard synchronised lyrics frame, supporting both
+ *    line-synced and word-by-word / syllable timing.
+ *  - Apple Music / Unison TTML lyrics (`<tt>` XML), with syllable sweeps.
+ *  - QQ / NetEase Karaoke LRC (`[start,dur](start,dur)word`).
+ *  - Standard `[mm:ss.xx]` LRC and `USLT` unsynchronised/plain lyrics.
  *
- * The second is what every other player reads and what older downloads have,
- * so it is the fallback rather than the exception. Preferring the first is what
- * keeps a downloaded song lighting up word by word instead of a line at a time.
+ * ### Local library files
  *
- * Never throws. A file that isn't one of the three containers, or is one and
- * has no lyrics in it, is a null — the caller falls back to the network, which
- * is exactly what it did before this existed.
+ * A file the listener put on the device themselves is not necessarily one of
+ * the containers this app writes. MP3 is the format most of those are in, and
+ * its lyrics live in an ID3 `USLT`/`TXXX`/`SYLT` frame rather than in a Vorbis
+ * comment or an iTunes atom, so ID3v2 and Ogg Vorbis comments are read as well
+ * as the three download formats. WAV files carrying an `id3 ` chunk go through
+ * the same ID3 reader.
  *
- * ### Offline packages
+ * ### Sidecar files
  *
- * One kind of download has no container to have been written into: an HLS or
- * DASH stream is saved as a directory of fMP4 segments behind a playlist, and
- * its `localUri` points at that playlist. `OfflineHls` and `OfflineDash` write
- * the lyrics beside it as a `lyrics.lrc` sidecar for exactly that reason — so
- * [sidecar] is tried first, and a package's lyrics come back the same shape as
- * a tagged file's. Without it those tracks fetched their lyrics from the
- * network on every play and showed none at all offline, which is the failure
- * this whole object exists to prevent.
+ * Not every file can hold tags, and a listener who keeps their library in a
+ * folder usually keeps the lyrics beside it. Seven formats are recognised:
+ *
+ *  - `<song>.ttml` / `lyrics.ttml` — word-by-word Apple Music / Unison XML
+ *  - `<song>.qrc` / `<song>.yrc` — word-by-word Karaoke lyrics
+ *  - `<song>.lrc` / `lyrics.lrc` — Enhanced word-timed LRC or standard LRC
+ *  - `<song>.srt` / `<song>.vtt` — SubRip and WebVTT subtitles/lyrics
+ *  - `<song>.txt` / `lyrics.txt` — Plain text lyrics
+ *
+ * A sidecar wins over the container: it is the listener's own file, written or
+ * copied after the audio, and it is the only thing they can edit to fix a
+ * wrong line. `OfflineHls` and `OfflineDash` write their `lyrics.lrc` for the
+ * same reason — a package of fMP4 segments has no container to be tagged.
  */
 object EmbeddedLyrics {
 
@@ -62,54 +76,216 @@ object EmbeddedLyrics {
     /**
      * The lyrics inside [uriString], or null when it has none worth showing.
      *
+     * [localPath] is the filesystem path the caller already knows for the file,
+     * when it knows one — the device library reads it out of MediaStore, and a
+     * `content://` URI on its own does not reliably answer "which folder is
+     * this in", which is what a sidecar search needs. Optional because a
+     * download's `file://` URI carries the path itself.
+     *
      * Touches the filesystem, so it runs on [Dispatchers.IO] regardless of
      * where it is called from.
      */
-    suspend fun forUri(context: Context, uriString: String): List<LyricLine>? =
+    suspend fun forUri(context: Context, uriString: String, localPath: String? = null): List<LyricLine>? =
         withContext(Dispatchers.IO) {
-            val raw = runCatching { read(context, Uri.parse(uriString)) }
+            val raw = runCatching { read(context, Uri.parse(uriString), localPath) }
                 .onFailure { Log.d(TAG, "no embedded lyrics in $uriString: ${it.message}") }
                 .getOrNull()
                 ?: return@withContext null
-            // The same last pass the network sources get, so a downloaded track
-            // and a streamed one draw their backing vocals the same way.
-            LrcLib.parseLrc(raw).takeIf { lines -> lines.any { it.text.isNotBlank() } }
-                ?.withBackgroundVocals()
+            parse(raw)
         }
 
-    /** The raw LRC text for the file, preferring this app's word-timed field. */
-    private fun read(context: Context, uri: Uri): String? =
-        sidecar(uri.path.takeIf { uri.scheme == "file" })
-            ?: open(context, uri)?.use { fromBytes(it.readAtMost(MAX_TAG_BYTES)) }
-
     /**
-     * The `lyrics.lrc` written next to the offline package playlist at [path].
-     *
-     * Recognised by the playlist rather than by the directory it sits in: the
-     * package lives under a path this module has no business knowing, and a
-     * local `.m3u8` is only ever one of these packages — nothing else in the
-     * app saves a playlist to disk. What the sidecar holds is the enhanced A2
-     * form where the download found one, which is why it is preferred over a
-     * container search rather than used as a fallback to it.
-     *
-     * Takes the path rather than the `Uri` it came out of so the pairing with
-     * the writers can be tested on a real directory, without a device.
+     * Parses the raw lyric string in any supported format (TTML, Karaoke LRC,
+     * Enhanced LRC, Standard LRC, SRT, WebVTT, or plain text).
      */
-    internal fun sidecar(path: String?): String? {
-        val playlist = path?.let(::File)?.takeIf { it.name.endsWith(".m3u8", ignoreCase = true) }
-            ?: return null
-        val file = File(playlist.parentFile ?: return null, "lyrics.lrc")
-        // Bounded for the same reason [MAX_TAG_BYTES] is: this is read into a
-        // string, and the size on disk is the only thing that says how big one.
-        if (!file.isFile || file.length() !in 1..MAX_TAG_BYTES.toLong()) return null
-        return runCatching { file.readText() }
-            .onFailure { Log.d(TAG, "could not read $file: ${it.message}") }
-            .getOrNull()
-            ?.takeIf { it.isNotBlank() }
+    internal fun parse(raw: String): List<LyricLine>? {
+        val trimmed = raw.trim()
+        if (trimmed.isBlank()) return null
+
+        val lines = when {
+            // TTML: Apple Music word-timed, Unison, or XML format
+            trimmed.contains(Regex("""<tt(?:\s|>)""", RegexOption.IGNORE_CASE)) ||
+                trimmed.contains("http://www.w3.org/ns/ttml", ignoreCase = true) ||
+                (trimmed.startsWith("<?xml") && trimmed.contains("<p")) -> {
+                TtmlLyrics.parse(trimmed)
+            }
+            // Karaoke LRC: QQ/QRC and NetEase YRC word timing
+            KaraokeLrc.looksLike(trimmed) -> {
+                KaraokeLrc.parse(trimmed)
+            }
+            // SubRip (SRT) and WebVTT
+            trimmed.contains("-->") -> {
+                parseSrtOrVtt(trimmed)
+            }
+            // Enhanced LRC or Standard LRC or plain text
+            else -> {
+                val lrcLines = LrcLib.parseLrc(trimmed)
+                if (lrcLines.any { it.isWordSynced }) {
+                    lrcLines
+                } else {
+                    EnhancedLrc.parse(trimmed).ifEmpty { lrcLines }
+                        .ifEmpty { parsePlainText(trimmed) }
+                }
+            }
+        }
+
+        return lines.takeIf { list -> list.any { it.text.isNotBlank() } }
+            ?.withBackgroundVocals()
     }
 
     /**
-     * The raw LRC text in [head], whichever of the three containers it is.
+     * Parses SubRip (`.srt`) and WebVTT (`.vtt`) subtitles into [LyricLine]s,
+     * preserving cue timestamps and any inline `<...>` word stamps.
+     */
+    internal fun parseSrtOrVtt(text: String): List<LyricLine> {
+        val cueRegex = Regex(
+            """(?:(\d{1,2}):)?(\d{2}):(\d{2})[,.](\d{2,3})\s*-->\s*(?:(\d{1,2}):)?(\d{2}):(\d{2})[,.](\d{2,3})"""
+        )
+        val lines = mutableListOf<LyricLine>()
+        val blocks = text.replace("\r\n", "\n").replace('\r', '\n').split("\n\n")
+        for (block in blocks) {
+            val blockLines = block.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            val timeIndex = blockLines.indexOfFirst { cueRegex.containsMatchIn(it) }
+            if (timeIndex < 0) continue
+            val timeMatch = cueRegex.find(blockLines[timeIndex]) ?: continue
+            val startMs = parseCueTimestamp(
+                timeMatch.groupValues[1],
+                timeMatch.groupValues[2],
+                timeMatch.groupValues[3],
+                timeMatch.groupValues[4],
+            )
+            val endMs = parseCueTimestamp(
+                timeMatch.groupValues[5],
+                timeMatch.groupValues[6],
+                timeMatch.groupValues[7],
+                timeMatch.groupValues[8],
+            )
+            val body = blockLines.drop(timeIndex + 1).joinToString(" ")
+            if (body.isBlank()) continue
+            // WebVTT can carry inline cue timestamps: <00:01.500>word
+            if (body.contains(WORD_STAMP_REGEX)) {
+                val enhancedLine = "[%02d:%02d.%02d]%s".format(
+                    Locale.ROOT, (startMs / 1000) / 60, (startMs / 1000) % 60, (startMs % 1000) / 10, body
+                )
+                val parsed = EnhancedLrc.parse(enhancedLine)
+                if (parsed.isNotEmpty() && parsed.first().isWordSynced) {
+                    lines += parsed.first().copy(timeMs = startMs, sungUntilMs = endMs)
+                    continue
+                }
+            }
+            lines += LyricLine(
+                timeMs = startMs,
+                text = body.replace(Regex("""<[^>]+>"""), "").trim(),
+                sungUntilMs = endMs,
+            )
+        }
+        return lines.sortedBy { it.timeMs }.withInstrumentalGaps()
+    }
+
+    private fun parseCueTimestamp(h: String, m: String, s: String, ms: String): Long {
+        val hours = if (h.isNotEmpty()) h.toLong() else 0L
+        val fraction = if (ms.length == 2) ms.toLong() * 10 else ms.toLong()
+        return hours * 3_600_000L + m.toLong() * 60_000L + s.toLong() * 1_000L + fraction
+    }
+
+    private fun parsePlainText(text: String): List<LyricLine> {
+        return text.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .filterNot { it.matches(Regex("""^\[[A-Za-z]+:.*]$""")) }
+            .map { LyricLine(0L, it) }
+            .toList()
+    }
+
+    /** The raw lyrics text for the file: a sidecar first, then the container's own tags. */
+    private fun read(context: Context, uri: Uri, localPath: String?): String? =
+        sidecar(pathOf(context, uri, localPath))
+            ?: open(context, uri)?.use { fromBytes(it.readAtMost(MAX_TAG_BYTES)) }
+
+    /**
+     * A path for the file behind [uri], as far as one can be had.
+     *
+     * A `content://` URI is not a path: MediaStore's `DATA` column is the only
+     * thing that turns one into the other, and on scoped storage it is the
+     * caller's cursor or nothing. [localPath] is that answer when the caller
+     * already has it; this is the fallback for a caller that does not.
+     */
+    private fun pathOf(context: Context, uri: Uri, localPath: String?): String? {
+        localPath?.takeIf { it.isNotBlank() }?.let { return it }
+        if (uri.scheme == "file") return uri.path
+        if (uri.scheme != "content") return null
+        return runCatching {
+            context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DATA), null, null, null)
+                ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * The lyrics file placed beside the audio file at [path].
+     *
+     * The stem-named file is looked for before the generic one because a folder
+     * holding an album would otherwise serve every track the same lyrics. Names
+     * are compared lower-cased and the directory is listed once, so `Song.LRC`
+     * and `Song.lrc` are the same file to a listener — Android's filesystem is
+     * case-sensitive and the listener's old music player's was not.
+     *
+     * Word-timed formats (.ttml, .qrc, .yrc, .lrc) are checked before plain text.
+     */
+    internal fun sidecar(path: String?): String? {
+        val audio = path?.let(::File) ?: return null
+        val dir = audio.parentFile ?: return null
+        val stem = audio.nameWithoutExtension
+        if (stem.isBlank()) return null
+        val entries = runCatching { dir.listFiles() }.getOrNull()
+            ?.filter { it.isFile }
+            ?.associateBy { it.name.lowercase(Locale.ROOT) }
+            ?: return null
+        val playlist = audio.isPlaylist()
+        // A folder holding several tracks must not serve them all the same
+        // lyrics: a stray `lyrics.lrc` beside a downloaded album belongs to one
+        // of them at most, and the stem-named file is the only placement that
+        // can say which. It is still the right file for a folder holding a
+        // single track, or for a package's playlist, which is its own case.
+        val oneTrack = entries.values.count { it.extension.lowercase(Locale.ROOT) in AUDIO_EXTENSIONS } <= 1
+        val wanted = buildList {
+            if (!playlist) {
+                add("$stem.ttml")
+                add("$stem.qrc")
+                add("$stem.yrc")
+                add("$stem.lrc")
+                add("$stem.srt")
+                add("$stem.vtt")
+                add("$stem.txt")
+            }
+            if (playlist || oneTrack) {
+                add("lyrics.ttml")
+                add("lyrics.qrc")
+                add("lyrics.yrc")
+                add("lyrics.lrc")
+                add("lyrics.srt")
+                add("lyrics.vtt")
+                add("lyrics.txt")
+            }
+        }.map { it.lowercase(Locale.ROOT) }.distinct()
+        for (name in wanted) {
+            val file = entries[name] ?: continue
+            // Bounded for the same reason [MAX_TAG_BYTES] is: this is read into
+            // a string, and the size on disk is the only thing that says how
+            // big one. An empty file is the writers' "there are no lyrics".
+            if (file.length() !in 1..MAX_TAG_BYTES.toLong()) continue
+            val text = runCatching { file.readText() }
+                .onFailure { Log.d(TAG, "could not read $file: ${it.message}") }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+            if (text != null) return text
+        }
+        return null
+    }
+
+    private fun File.isPlaylist(): Boolean = name.endsWith(".m3u8", ignoreCase = true)
+
+    /**
+     * The raw lyrics text in [head], whichever container it is.
      *
      * Split from [read] so the parsing can be tested against bytes a tagger
      * just produced, without a device or a `Context` in the way — the round
@@ -117,6 +293,9 @@ object EmbeddedLyrics {
      */
     internal fun fromBytes(head: ByteArray): String? {
         val found = when {
+            head.isId3() -> id3(head, 0)
+            head.startsWith(OGG_MAGIC) -> ogg(head)
+            head.startsWith(RIFF_MAGIC) -> riff(head)
             head.startsWith(FLAC_MAGIC) -> flac(head)
             head.startsWith(MATROSKA_MAGIC) -> matroska(head)
             head.isMp4() -> mp4(head)
@@ -132,24 +311,348 @@ object EmbeddedLyrics {
             context.contentResolver.openInputStream(uri)
         }
 
+    // ---- Tag Quality Rating -------------------------------------------------
+
+    private val WORD_STAMP_REGEX = Regex("""<(\d{1,3}):(\d{2})[.:](\d{2,3})>""")
+    private val LINE_STAMP_REGEX = Regex("""\[(\d{1,3}):(\d{2})[.:](\d{2,3})]""")
+    private val TTML_WORD_REGEX = Regex("""<span(?:\s+[^>]*?)?\b(?:begin|end)=[^>]*>""", RegexOption.IGNORE_CASE)
+    private val TTML_LINE_REGEX = Regex("""<p(?:\s+[^>]*?)?\bbegin=[^>]*>""", RegexOption.IGNORE_CASE)
+    private val KARAOKE_WORD_REGEX = Regex("""\(\d{1,8},\d{1,8}(?:,\d{1,8})?\)""")
+
+    /**
+     * Rates the synchronisation quality of [text]:
+     * 3 = Word-level timing (Enhanced LRC, TTML spans, or Karaoke)
+     * 2 = Line-level timing (Standard LRC, TTML paragraphs, or SRT/VTT)
+     * 1 = Plain unsynchronised lyrics
+     * 0 = Blank or empty
+     */
+    private fun lyricQuality(text: String?): Int {
+        if (text.isNullOrBlank()) return 0
+        return when {
+            text.contains(WORD_STAMP_REGEX) ||
+                text.contains(TTML_WORD_REGEX) ||
+                text.contains(KARAOKE_WORD_REGEX) -> 3
+            text.contains(LINE_STAMP_REGEX) ||
+                text.contains(TTML_LINE_REGEX) ||
+                text.contains("-->") -> 2
+            else -> 1
+        }
+    }
+
+    private fun pickBest(vararg items: String?): String? =
+        items.filterNotNull().maxByOrNull { lyricQuality(it) }
+
+    // ---- ID3v2 (MP3, and WAV's `id3 ` chunk) --------------------------------
+
+    /**
+     * The lyrics from an ID3v2 tag at [from].
+     *
+     * This is the frame layout every MP3 in a listener's own library uses.
+     * `USLT` is the standard "unsynchronised lyrics" frame most taggers write;
+     * `SYLT` is the synchronised one (with line or word-by-word timestamps);
+     * `TXXX` is what a tagger writes when it has no dedicated frame for a field,
+     * and it is where `BITCHORD_LYRICS` and `SYNCEDLYRICS` land. All are read,
+     * with word-synced lyrics taking precedence over line-synced, and line-synced
+     * over plain text.
+     *
+     * v2.2 frames have three-character ids, v2.3 sizes are plain big-endian and
+     * v2.4 sizes are sync-safe.
+     */
+    private fun id3(bytes: ByteArray, from: Int): String? {
+        if (from < 0 || from + 10 > bytes.size) return null
+        if (!bytes.isId3(from)) return null
+        val major = bytes[from + 3].toInt() and 0xFF
+        if (major !in 2..4) return null
+        val flags = bytes[from + 5].toInt() and 0xFF
+        val declared = syncSafe(bytes, from + 6) ?: return null
+        val end = (from + 10 + declared).coerceAtMost(bytes.size)
+        if (end <= from + 10) return null
+        // Whole-tag unsynchronisation rewrites `FF 00` back to `FF`, so the
+        // frame walk has to see the decoded bytes rather than the file's own.
+        val body = bytes.copyOfRange(from + 10, end)
+            .let { if (flags and 0x80 != 0) deUnsynchronise(it) else it }
+        var pos = 0
+        if (major >= 3 && flags and 0x40 != 0) {
+            if (body.size < 4) return null
+            val ext = if (major == 4) syncSafe(body, 0) ?: return null
+            else (readU32(body, 0).toInt() + 4)
+            pos = ext
+        }
+        val headerLen = if (major == 2) 6 else 10
+        val idLen = if (major == 2) 3 else 4
+        val candidates = mutableListOf<String>()
+        while (pos + headerLen <= body.size) {
+            if (body[pos] == 0.toByte()) break
+            val id = String(body, pos, idLen, Charsets.ISO_8859_1)
+            val size = when {
+                major == 2 -> ((body[pos + 3].toInt() and 0xFF) shl 16) or
+                    ((body[pos + 4].toInt() and 0xFF) shl 8) or (body[pos + 5].toInt() and 0xFF)
+                major == 4 -> syncSafe(body, pos + 4) ?: break
+                else -> readU32(body, pos + 4).toInt()
+            }
+            if (size <= 0 || pos + headerLen + size > body.size) break
+            val frame = body.copyOfRange(pos + headerLen, pos + headerLen + size)
+            when (id) {
+                "USLT", "ULT" -> textFrame(frame)?.takeIf { it.isNotBlank() }?.let { text ->
+                    candidates += text
+                }
+                "TXXX", "TXX" -> userText(frame)?.let { (name, text) ->
+                    if (text.isNotBlank()) {
+                        when {
+                            name.equals(WORD_LYRICS_FIELD, true) -> return text
+                            name.equals("SYNCEDLYRICS", true) || name.equals("LYRICS_SYNCED", true) ||
+                                name.equals("LYRICS", true) -> candidates += text
+                        }
+                    }
+                }
+                "SYLT", "SLT" -> timedLyrics(frame)?.let { candidates += it }
+            }
+            pos += headerLen + size
+        }
+        return pickBest(*candidates.toTypedArray())
+    }
+
+    /** The text of a `USLT`/`ULT` frame after its encoding byte, language and descriptor. */
+    private fun textFrame(frame: ByteArray): String? {
+        if (frame.size < 5) return null
+        val encoding = frame[0].toInt() and 0xFF
+        val (_, after) = readEncoded(frame, 4, encoding)
+        return decodeText(frame, after, frame.size - after, encoding)
+    }
+
+    /** A `TXXX`'s (description, value) pair. */
+    private fun userText(frame: ByteArray): Pair<String, String>? {
+        if (frame.size < 2) return null
+        val encoding = frame[0].toInt() and 0xFF
+        val (name, after) = readEncoded(frame, 1, encoding)
+        val value = decodeText(frame, after, frame.size - after, encoding)
+        return name to value
+    }
+
+    /**
+     * A `SYLT` frame turned into LRC lines, preserving word-by-word timing
+     * when words or syllables have separate timestamps.
+     *
+     * The timestamp format byte says milliseconds or MPEG frames; frames cannot
+     * be turned into a time without the audio header, and a wrong time is worse
+     * than no lyrics, so only milliseconds are used.
+     */
+    private fun timedLyrics(frame: ByteArray): String? {
+        if (frame.size < 7) return null
+        val encoding = frame[0].toInt() and 0xFF
+        val format = frame[4].toInt() and 0xFF
+        if (format != 2) return null
+        var pos = 6
+        val (_, afterDescriptor) = readEncoded(frame, pos, encoding)
+        pos = afterDescriptor
+        val entries = mutableListOf<Pair<String, Long>>()
+        while (pos + 4 <= frame.size) {
+            val (text, next) = readEncoded(frame, pos, encoding)
+            if (next + 4 > frame.size) break
+            val ms = readU32(frame, next)
+            pos = next + 4
+            entries += text to ms
+        }
+        if (entries.isEmpty()) return null
+
+        val hasNewlines = entries.any { it.first.contains('\n') || it.first.contains('\r') }
+        val hasEmptyMarkers = entries.any { it.first.isEmpty() }
+
+        // Plain line-timed entries with no line breaks or word markers
+        if (!hasNewlines && !hasEmptyMarkers) {
+            val lines = StringBuilder()
+            for ((text, ms) in entries) {
+                val total = ms / 1000
+                lines.append(
+                    "[%02d:%02d.%02d]%s\n".format(
+                        Locale.ROOT, total / 60, total % 60, (ms % 1000) / 10, text,
+                    ),
+                )
+            }
+            return lines.takeIf { it.isNotBlank() }?.toString()
+        }
+
+        // Word/syllable-timed entries: group events into lines separated by \n or empty terminators
+        val lines = StringBuilder()
+        val currentLine = mutableListOf<Pair<String, Long>>()
+
+        fun flushLine(terminatorMs: Long?) {
+            if (currentLine.isEmpty()) return
+            val lineStartMs = currentLine.first().second
+            val lineSeconds = lineStartMs / 1000
+            val lineStamp = "[%02d:%02d.%02d]".format(
+                Locale.ROOT, lineSeconds / 60, lineSeconds % 60, (lineStartMs % 1000) / 10,
+            )
+            if (currentLine.size == 1 && terminatorMs == null) {
+                val (text, _) = currentLine[0]
+                lines.append(lineStamp).append(text.trimEnd('\r', '\n')).append('\n')
+            } else {
+                lines.append(lineStamp)
+                for ((text, wordMs) in currentLine) {
+                    val sec = wordMs / 1000
+                    val wordStamp = "<%02d:%02d.%02d>".format(
+                        Locale.ROOT, sec / 60, sec % 60, (wordMs % 1000) / 10,
+                    )
+                    lines.append(wordStamp).append(text.trimEnd('\r', '\n'))
+                }
+                if (terminatorMs != null) {
+                    val sec = terminatorMs / 1000
+                    val termStamp = "<%02d:%02d.%02d>".format(
+                        Locale.ROOT, sec / 60, sec % 60, (terminatorMs % 1000) / 10,
+                    )
+                    lines.append(termStamp)
+                }
+                lines.append('\n')
+            }
+            currentLine.clear()
+        }
+
+        for (i in entries.indices) {
+            val (text, ms) = entries[i]
+            if (text.isEmpty()) {
+                flushLine(ms)
+            } else if (text.contains('\n') || text.contains('\r')) {
+                currentLine += text to ms
+                val nextMs = entries.getOrNull(i + 1)?.takeIf { it.first.isEmpty() }?.second
+                flushLine(nextMs)
+            } else {
+                currentLine += text to ms
+            }
+        }
+        flushLine(null)
+        return lines.takeIf { it.isNotBlank() }?.toString()
+    }
+
+    /** Reads one null-terminated string, returning it and where the next field starts. */
+    private fun readEncoded(bytes: ByteArray, from: Int, encoding: Int): Pair<String, Int> {
+        val wide = encoding == 1 || encoding == 2
+        var i = from.coerceAtLeast(0)
+        if (wide) {
+            while (i + 1 < bytes.size) {
+                if (bytes[i] == 0.toByte() && bytes[i + 1] == 0.toByte()) break
+                i += 2
+            }
+            val text = decodeText(bytes, from, (i - from).coerceAtLeast(0), encoding)
+            return text to (i + 2).coerceAtMost(bytes.size)
+        }
+        while (i < bytes.size && bytes[i] != 0.toByte()) i++
+        val text = decodeText(bytes, from, (i - from).coerceAtLeast(0), encoding)
+        return text to (i + 1).coerceAtMost(bytes.size)
+    }
+
+    private fun decodeText(bytes: ByteArray, from: Int, length: Int, encoding: Int): String {
+        if (length <= 0 || from < 0 || from + length > bytes.size) return ""
+        val charset = when (encoding) {
+            1 -> Charsets.UTF_16
+            2 -> Charsets.UTF_16BE
+            3 -> Charsets.UTF_8
+            else -> Charsets.ISO_8859_1
+        }
+        return String(bytes, from, length, charset).trimEnd('\u0000')
+    }
+
+    /** Turns `FF 00` back into `FF`, which is all ID3v2 unsynchronisation does. */
+    private fun deUnsynchronise(bytes: ByteArray): ByteArray {
+        val out = ByteArrayOutputStream(bytes.size)
+        var i = 0
+        while (i < bytes.size) {
+            out.write(bytes[i].toInt())
+            if (bytes[i] == 0xFF.toByte() && i + 1 < bytes.size && bytes[i + 1] == 0.toByte()) i++
+            i++
+        }
+        return out.toByteArray()
+    }
+
+    private fun ByteArray.isId3(from: Int = 0): Boolean =
+        from + 3 <= size && this[from] == 'I'.code.toByte() &&
+            this[from + 1] == 'D'.code.toByte() && this[from + 2] == '3'.code.toByte()
+
+    /** A sync-safe 28-bit integer: four bytes, seven bits each. */
+    private fun syncSafe(bytes: ByteArray, at: Int): Int? {
+        if (at < 0 || at + 4 > bytes.size) return null
+        var value = 0
+        for (i in 0 until 4) {
+            val b = bytes[at + i].toInt() and 0xFF
+            if (b and 0x80 != 0) return null
+            value = (value shl 7) or b
+        }
+        return value
+    }
+
+    // ---- Ogg Vorbis / Opus --------------------------------------------------
+
+    /**
+     * The `LYRICS` comment from an Ogg stream's comment header.
+     *
+     * Ogg pages are walked and their packets collected: a Vorbis comment header
+     * starts with `\x03vorbis`, an Opus one with `OpusTags`, and both then hold
+     * the same little-endian vendor/count/entry layout as FLAC's
+     * `VORBIS_COMMENT` block — so [vorbisComment] reads either.
+     */
+    private fun ogg(bytes: ByteArray): String? {
+        var pos = 0
+        while (pos + 27 <= bytes.size) {
+            if (!bytes.startsWith(OGG_MAGIC, pos)) break
+            val segments = bytes[pos + 26].toInt() and 0xFF
+            val tableAt = pos + 27
+            if (tableAt + segments > bytes.size) break
+            var bodyLen = 0
+            for (i in 0 until segments) bodyLen += bytes[tableAt + i].toInt() and 0xFF
+            val bodyAt = tableAt + segments
+            if (bodyAt + bodyLen > bytes.size) break
+            val packet = bytes.copyOfRange(bodyAt, bodyAt + bodyLen)
+            val lyrics = when {
+                packet.startsWith(VORBIS_COMMENT_MAGIC) -> vorbisComment(packet, 7, packet.size)
+                packet.startsWith(OPUS_TAGS_MAGIC) -> vorbisComment(packet, 8, packet.size)
+                else -> null
+            }
+            if (lyrics != null) return lyrics
+            pos = bodyAt + bodyLen
+        }
+        return null
+    }
+
+    // ---- RIFF / WAV ---------------------------------------------------------
+
+    /**
+     * The ID3 tag inside a WAV's `id3 ` chunk.
+     *
+     * A WAV's chunks are length-prefixed and word-aligned, so the tag is found
+     * by walking them rather than by scanning — an `id3 ` byte sequence inside
+     * the audio data is not a tag.
+     */
+    private fun riff(bytes: ByteArray): String? {
+        if (bytes.size < 12 || !bytes.startsWith(RIFF_MAGIC)) return null
+        if (String(bytes, 8, 4, Charsets.ISO_8859_1) != "WAVE") return null
+        var pos = 12
+        while (pos + 8 <= bytes.size) {
+            val id = String(bytes, pos, 4, Charsets.ISO_8859_1)
+            val size = readLE32(bytes, pos + 4)
+            val start = pos + 8
+            if (size < 0 || start + size > bytes.size) return null
+            if (id.equals("id3 ", ignoreCase = true) || id.equals("ID3 ", ignoreCase = true)) {
+                return id3(bytes, start)
+            }
+            pos = start + size + (size and 1)
+        }
+        return null
+    }
+
     // ---- MP4 / M4A ----------------------------------------------------------
 
     /**
-     * The `©lyr` atom's text, or this app's freeform one where it is present.
+     * The `©lyr` atom's text, or freeform items (`BITCHORD_LYRICS`, `SYNCEDLYRICS`, `LYRICS`).
      *
-     * Both live under `moov/udta/meta/ilst`, and the search is scoped to `moov`
-     * rather than run over the file: a four-byte pattern turns up in audio data
-     * often enough that scanning the whole thing would eventually read a frame
-     * as a tag. Inside `moov` the same pattern is a tag or it is nothing.
+     * Both live under `moov/udta/meta/ilst`, and the search is scoped to `moov`.
      */
     private fun mp4(bytes: ByteArray): String? {
         val moov = topLevelBox(bytes, "moov") ?: return null
-        // Exclusive, and deliberately so: the lyrics are the last item written
-        // into `ilst`, so their value ends exactly on `moov`'s own end — an
-        // inclusive bound here rejects the one atom this is looking for.
         val end = moov.last + 1
-        return ilstText(bytes, moov.first, end, freeform = true)
-            ?: ilstText(bytes, moov.first, end, freeform = false)
+        val word = ilstFreeform(bytes, moov.first, end, WORD_LYRICS_FIELD)
+        val synced = ilstFreeform(bytes, moov.first, end, "SYNCEDLYRICS")
+        val lyrics = ilstFreeform(bytes, moov.first, end, "LYRICS")
+        val standard = ilstStandard(bytes, moov.first, end)
+        return pickBest(word, synced, lyrics, standard)
     }
 
     /**
@@ -180,41 +683,33 @@ object EmbeddedLyrics {
         return null
     }
 
-    /**
-     * The text of the lyrics item inside [within].
-     *
-     * [freeform] picks which of the two: this app's `----` item, whose name is
-     * carried in a `name` box beside the value, or the standard `©lyr`, whose
-     * four-byte type *is* the name. They are stored differently enough that one
-     * search cannot find both.
-     */
-    private fun ilstText(bytes: ByteArray, from: Int, endExclusive: Int, freeform: Boolean): String? {
-        val marker = if (freeform) WORD_LYRICS_FIELD.toByteArray(Charsets.UTF_8) else LYR_ATOM
+    private fun ilstFreeform(bytes: ByteArray, from: Int, endExclusive: Int, name: String): String? {
+        val marker = name.toByteArray(Charsets.UTF_8)
         var at = from
         while (true) {
             val found = bytes.indexOf(marker, at, endExclusive) ?: return null
-            // The value is the first `data` box after the name, in both layouts:
-            // a freeform item is mean/name/data, a standard one is type/data.
             val data = bytes.indexOf(DATA_ATOM, found, endExclusive) ?: return null
             dataText(bytes, data, endExclusive)?.let { return it }
             at = found + marker.size
         }
     }
 
-    /**
-     * An iTunes `data` box's payload as text.
-     *
-     * The box is version/flags(4) + locale(4) + the value, and the length in
-     * front of it is what says where the value stops — a lyric sheet has
-     * newlines in it and nothing else terminates it.
-     */
+    private fun ilstStandard(bytes: ByteArray, from: Int, endExclusive: Int): String? {
+        var at = from
+        while (true) {
+            val found = bytes.indexOf(LYR_ATOM, at, endExclusive) ?: return null
+            val data = bytes.indexOf(DATA_ATOM, found, endExclusive) ?: return null
+            dataText(bytes, data, endExclusive)?.let { return it }
+            at = found + LYR_ATOM.size
+        }
+    }
+
+    /** An iTunes `data` box's payload as text. */
     private fun dataText(bytes: ByteArray, dataAt: Int, endExclusive: Int): String? {
         val start = dataAt - 4
         if (start < 0 || dataAt + 12 > endExclusive) return null
         val size = readU32(bytes, start).toInt()
         if (size <= 16 || start + size > endExclusive) return null
-        // Type indicator 1 is UTF-8 text; a cover's 13/14 is the other thing a
-        // `data` box holds, and decoding a JPEG as a string is not a lyric.
         if (readU32(bytes, dataAt + 4).toInt() != 1) return null
         return String(bytes, dataAt + 12, start + size - (dataAt + 12), Charsets.UTF_8)
     }
@@ -222,7 +717,8 @@ object EmbeddedLyrics {
     // ---- FLAC ---------------------------------------------------------------
 
     /**
-     * The `LYRICS` (or [WORD_LYRICS_FIELD]) comment out of the `VORBIS_COMMENT` block.
+     * The `LYRICS` (or [WORD_LYRICS_FIELD] / `SYNCEDLYRICS`) comment out of the
+     * `VORBIS_COMMENT` block.
      *
      * Every length in the block is **little-endian** — it reuses Ogg Vorbis'
      * layout, which is the one part of FLAC that isn't big-endian.
@@ -257,44 +753,39 @@ object EmbeddedLyrics {
         val vendor = u32() ?: return null
         pos += vendor
         val count = u32() ?: return null
-        var plain: String? = null
+        val candidates = mutableListOf<String>()
         repeat(count.coerceAtMost(4_096)) {
-            val length = u32() ?: return plain
-            if (length < 0 || pos + length > end) return plain
+            val length = u32() ?: return pickBest(*candidates.toTypedArray())
+            if (length < 0 || pos + length > end) return pickBest(*candidates.toTypedArray())
             val entry = String(bytes, pos, length, Charsets.UTF_8)
             pos += length
             val name = entry.substringBefore('=').uppercase()
             val value = entry.substringAfter('=', "")
-            // This app's own field wins outright; the standard one is held in
-            // case it turns out to be the only one there.
-            if (name == WORD_LYRICS_FIELD && value.isNotBlank()) return value
-            if (name == "LYRICS" && plain == null && value.isNotBlank()) plain = value
+            if (value.isNotBlank()) {
+                when (name) {
+                    WORD_LYRICS_FIELD -> return value
+                    "SYNCEDLYRICS", "LYRICS_SYNCED", "LYRICS", "UNSYNCEDLYRICS" -> {
+                        candidates += value
+                    }
+                }
+            }
         }
-        return plain
+        return pickBest(*candidates.toTypedArray())
     }
 
     // ---- Matroska / WebM ----------------------------------------------------
 
     /**
-     * The `LYRICS` SimpleTag's string.
-     *
-     * Scanned for rather than walked down to: the tags a download writes are
-     * appended after everything else (see `WebmTagger`), so reaching them
-     * properly would mean parsing the whole Segment — every cluster of audio —
-     * to arrive at the last few hundred bytes. The name is matched inside a
-     * `TagName` element and the value read out of the `TagString` that follows,
-     * so this is looking at tag structure rather than guessing at loose bytes.
+     * The `LYRICS`, `SYNCEDLYRICS`, or [WORD_LYRICS_FIELD] SimpleTag's string.
      */
     private fun matroska(bytes: ByteArray): String? {
-        var plain: String? = null
-        for (name in listOf(WORD_LYRICS_FIELD, "LYRICS")) {
+        val candidates = mutableListOf<String>()
+        for (name in listOf(WORD_LYRICS_FIELD, "SYNCEDLYRICS", "LYRICS")) {
             val needle = name.toByteArray(Charsets.US_ASCII)
             var from = 0
             while (true) {
                 val at = bytes.indexOf(needle, from, bytes.size) ?: break
                 from = at + needle.size
-                // The name element's own header sits immediately in front of it:
-                // id(2) + a one-byte length for a name this short.
                 if (at < 3 || bytes[at - 3] != ID_TAGNAME[0] || bytes[at - 2] != ID_TAGNAME[1]) continue
                 if ((bytes[at - 1].toInt() and 0x7F) != needle.size) continue
                 val string = bytes.indexOf(ID_TAGSTRING, from, bytes.size) ?: continue
@@ -304,10 +795,10 @@ object EmbeddedLyrics {
                 val value = String(bytes, valueAt, size.value.toInt(), Charsets.UTF_8)
                 if (value.isBlank()) continue
                 if (name == WORD_LYRICS_FIELD) return value
-                if (plain == null) plain = value
+                candidates += value
             }
         }
-        return plain
+        return pickBest(*candidates.toTypedArray())
     }
 
     private class Vint(val value: Long, val width: Int)
@@ -348,9 +839,9 @@ object EmbeddedLyrics {
         return out.toByteArray()
     }
 
-    private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
-        if (size < prefix.size) return false
-        return prefix.indices.all { this[it] == prefix[it] }
+    private fun ByteArray.startsWith(prefix: ByteArray, from: Int = 0): Boolean {
+        if (size - from < prefix.size) return false
+        return prefix.indices.all { this[from + it] == prefix[it] }
     }
 
     /** `ftyp` at offset 4 is what says "this is an MP4" — there is no leading magic. */
@@ -378,6 +869,11 @@ object EmbeddedLyrics {
         ((b[off].toLong() and 0xFF) shl 24) or ((b[off + 1].toLong() and 0xFF) shl 16) or
             ((b[off + 2].toLong() and 0xFF) shl 8) or (b[off + 3].toLong() and 0xFF)
 
+    /** Little-endian, for RIFF chunk lengths and Vorbis comments. */
+    private fun readLE32(b: ByteArray, off: Int): Int =
+        (b[off].toInt() and 0xFF) or ((b[off + 1].toInt() and 0xFF) shl 8) or
+            ((b[off + 2].toInt() and 0xFF) shl 16) or ((b[off + 3].toInt() and 0xFF) shl 24)
+
     private fun readU64(b: ByteArray, off: Int): Long {
         var v = 0L
         for (i in 0 until 8) v = (v shl 8) or (b[off + i].toLong() and 0xFF)
@@ -386,9 +882,22 @@ object EmbeddedLyrics {
 
     private const val FLAC_VORBIS_COMMENT = 4
     private val FLAC_MAGIC = "fLaC".toByteArray(Charsets.US_ASCII)
+    private val OGG_MAGIC = "OggS".toByteArray(Charsets.US_ASCII)
+    private val RIFF_MAGIC = "RIFF".toByteArray(Charsets.US_ASCII)
+    private val VORBIS_COMMENT_MAGIC = byteArrayOf(0x03) + "vorbis".toByteArray(Charsets.US_ASCII)
+    private val OPUS_TAGS_MAGIC = "OpusTags".toByteArray(Charsets.US_ASCII)
     private val MATROSKA_MAGIC = byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte())
     private val DATA_ATOM = "data".toByteArray(Charsets.ISO_8859_1)
     private val LYR_ATOM = byteArrayOf(0xA9.toByte()) + "lyr".toByteArray(Charsets.ISO_8859_1)
     private val ID_TAGNAME = byteArrayOf(0x45, 0xA3.toByte())
     private val ID_TAGSTRING = byteArrayOf(0x44, 0x87.toByte())
+
+    /**
+     * Extensions this app treats as audio when deciding whether a folder holds
+     * one track or an album. Only used to scope the folder-level `lyrics.lrc`.
+     */
+    private val AUDIO_EXTENSIONS = setOf(
+        "mp3", "m4a", "m4b", "alac", "aac", "flac", "ogg", "oga", "opus", "wav", "wave",
+        "aif", "aiff", "wma", "webm", "mka", "mp4", "dsf", "dff", "ape", "wv", "3ga",
+    )
 }

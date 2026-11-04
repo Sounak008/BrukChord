@@ -416,6 +416,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         durationMs: Long,
         album: String? = null,
         localUri: String? = null,
+        localPath: String? = null,
     ) {
         val sources = if (AppSettings.syncedLyrics.value) {
             AppSettings.lyricsSources.value
@@ -461,7 +462,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // nothing is being matched here — these lyrics were written into
             // this exact file, for this exact recording.
             if (localUri != null) {
-                EmbeddedLyrics.forUri(getApplication(), localUri)?.let { embedded ->
+                EmbeddedLyrics.forUri(getApplication(), localUri, localPath)?.let { embedded ->
                     _lyrics.value = embedded
                     // No source to name: what the file records is the lyrics,
                     // not which of the eight services they came from months ago.

@@ -401,6 +401,26 @@ object Downloads {
         return null
     }
 
+    /**
+     * The playable single-file copy downloaded for [videoId], if there is one.
+     *
+     * Used by [com.music.bitchord.playback.LocalFirstDataSource] at the moment
+     * a stream is about to be opened, so a queue entry built before the
+     * download existed still plays from the device. An offline HLS/DASH
+     * package is deliberately not returned: its URI is a `playlist.m3u8`, and
+     * a progressive reader handed a playlist fails the track. Those are chosen
+     * by [Song.toMediaItem] at queue-build time, where the media source type
+     * is still decided from the item's URI.
+     *
+     * Verifies the file the same way [verifiedSavedUri] does, because this runs
+     * on the player's loader thread and a record can outlive the file.
+     */
+    fun localPlaybackUri(videoId: String): Uri? {
+        val recorded = verifiedSavedUri(videoId) ?: return null
+        if (recorded.endsWith(".m3u8", ignoreCase = true)) return null
+        return runCatching { recorded.toUri() }.getOrNull()
+    }
+
     /** Delete the file saved for [videoId] and forget it. */
     suspend fun delete(context: Context, videoId: String): Boolean = withContext(Dispatchers.IO) {
         val uri = _saved.value[videoId]?.toUri() ?: return@withContext false

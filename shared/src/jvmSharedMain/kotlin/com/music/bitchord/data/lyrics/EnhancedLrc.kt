@@ -34,9 +34,14 @@ object EnhancedLrc {
         if (rows.none { it.words.isNotEmpty() }) return emptyList()
 
         return rows.mapIndexedNotNull { index, row ->
+            val (cleanPlain, alignment) = if (row.plain.startsWith("<R>")) {
+                row.plain.substringAfter("<R>") to LyricAlignment.End
+            } else {
+                row.plain to LyricAlignment.Start
+            }
             if (row.words.isEmpty()) {
-                val text = decodeEntities(row.plain)
-                return@mapIndexedNotNull if (text.isEmpty()) null else LyricLine(row.timeMs, text)
+                val text = decodeEntities(cleanPlain)
+                return@mapIndexedNotNull if (text.isEmpty()) null else LyricLine(row.timeMs, text, alignment = alignment)
             }
             // A word runs until the next one starts; the last runs until the
             // next line does. Without a next line — the closing word of the
@@ -57,6 +62,7 @@ object EnhancedLrc {
                 timeMs = minOf(row.timeMs, words.first().startMs),
                 text = words.joinToString(" ") { it.text },
                 words = words,
+                alignment = alignment,
             )
         }.withInstrumentalGaps()
     }
