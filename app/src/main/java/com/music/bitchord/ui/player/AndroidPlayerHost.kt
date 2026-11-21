@@ -82,6 +82,8 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val canvasOverCellular get() = AppSettings.canvasOverCellular
         override val fullBleedArtwork get() = AppSettings.fullBleedArtwork
         override val showTotalDuration get() = AppSettings.showTotalDuration
+        override val coloredSeekBar get() = AppSettings.coloredSeekBar
+        override fun setColoredSeekBar(enabled: Boolean) = AppSettings.setColoredSeekBar(enabled)
         override val hideSongStatus get() = AppSettings.hideSongStatus
         override val hideLyricsPreview get() = AppSettings.hideLyricsPreview
         override val showQueueHistory get() = AppSettings.showQueueHistory

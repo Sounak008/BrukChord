@@ -308,6 +308,8 @@ interface PlayerSettingsSource {
     val smartMixInProgress: StateFlow<Boolean>
     /** The Automix blend in flight, for the scrubber's beat glow; null between blends. */
     val smartMixBlend: StateFlow<MixBlend?>
+    val coloredSeekBar: StateFlow<Boolean> get() = MutableStateFlow(true)
+    fun setColoredSeekBar(enabled: Boolean) {}
     /** The Automix blend in flight laid out for the mix popup; null between blends. */
     val smartMixView: StateFlow<MixTransitionView?>
     /** Progress through [smartMixView]'s blend, 0..1. */

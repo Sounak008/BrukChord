@@ -67,8 +67,8 @@ internal suspend fun renderLyricsShareCard(
     card: LyricsShareRequest,
     /** The 1080×1920 story layout instead: see [layoutStory]. */
     story: Boolean = false,
-    /** The BitChord mark at the top right; without it the passage moves up into its room. */
-    showLogo: Boolean = true,
+    /** The logo/mark feature is disabled for clean sharing. */
+    showLogo: Boolean = false,
     /** No backdrop: the card alone, to lay over a video of one. */
     transparent: Boolean = false,
 ): Bitmap = lyricsCardPainter(context, card, story, showLogo, transparent).render(null)
@@ -85,7 +85,7 @@ internal suspend fun lyricsCardPainter(
     context: Context,
     card: LyricsShareRequest,
     story: Boolean = false,
-    showLogo: Boolean = true,
+    showLogo: Boolean = false,
     transparent: Boolean = false,
 ): LyricsCardPainter = withContext(Dispatchers.Default) {
     val type = Fonts(context)
@@ -128,8 +128,8 @@ private fun layoutCard(
     // barely taller than its own text instead of a 9:16 sheet with a paragraph
     // floating in the middle of it, and the size comes down only as far as the
     // ladder goes — past that the frame gives rather than the type does.
-    // With no mark the passage starts at the same margin the footer keeps below.
-    val headTop = if (showLogo) HEADER_BOTTOM + GAP_ABOVE_BODY else FOOTER_PAD
+    // Clean lyrics layout without header logo.
+    val headTop = FOOTER_PAD
     val frameRoom = MAX_CARD_H - FOOTER_THUMB - FOOTER_PAD - GAP_BELOW_BODY - headTop
     val plan = fittestPlan(type, card.lines, frameRoom)
     val bodyTop = headTop
@@ -144,23 +144,6 @@ private fun layoutCard(
     val bitmap = Bitmap.createBitmap(CARD_W, cardH.roundToInt(), Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
     if (!transparent) drawPlayerBackdrop(canvas, card.backdrop, cardH)
-
-    // ── Header ──────────────────────────────────────────────────────────────
-    // The mark alone, at the top right — the same one the Replay carries, so
-    // two of these cards still read as one family. Nothing else goes above
-    // the passage: the picture is the verse, not a caption for it.
-    if (showLogo) {
-        val brand = type.heading(46f, 0xE6FFFFFF.toInt()).apply {
-            textAlign = Paint.Align.RIGHT
-        }
-        canvas.drawText(BRAND, CARD_W - CARD_MARGIN, HEADER_BASELINE, brand)
-        drawLogo(
-            canvas,
-            context,
-            CARD_W - CARD_MARGIN - brand.measureText(BRAND) - LOGO_GAP,
-            HEADER_BASELINE,
-        )
-    }
 
     // ── Footer ──────────────────────────────────────────────────────────────
     // Which song this is — which only the backdrop had been saying until now.
@@ -241,31 +224,13 @@ private fun layoutStory(
     // the credit is read, not skimmed past.
     val title = type.body(36f, Color.WHITE, bold = true)
     val artist = type.body(36f, 0xE6FFFFFF.toInt())
-    val lines = if (showLogo) 3 else 2
+    val lines = 2
     // The credit's lines, centred as a block on the sleeve beside them.
     val lineH = 44f
     var baseline = thumbY + (STORY_THUMB - lineH * lines) / 2f + lineH - 10f
     canvas.drawText(ellipsised(card.song.title, title, room), textX, baseline, title)
     baseline += lineH
     canvas.drawText(ellipsised(card.song.artist, artist, room), textX, baseline, artist)
-    if (showLogo) {
-        baseline += lineH
-        val brand = type.body(30f, 0x99FFFFFF.toInt(), bold = true)
-        val mark = runCatching { ResourcesCompat.getDrawable(context.resources, R.drawable.ic_logo, null) }.getOrNull()
-        var brandX = textX
-        if (mark != null) {
-            val markH = 22f
-            val markW = markH * mark.intrinsicWidth / mark.intrinsicHeight.coerceAtLeast(1)
-            mark.setTint(0x99FFFFFF.toInt())
-            mark.setBounds(
-                brandX.toInt(), (baseline - markH).toInt(),
-                (brandX + markW).toInt(), baseline.toInt(),
-            )
-            mark.draw(canvas)
-            brandX += markW + 8f
-        }
-        canvas.drawText(BRAND, brandX, baseline, brand)
-    }
     return CardLayout(bitmap.width, bitmap.height, bitmap, place(plan, x, top + STORY_PAD))
 }
 

@@ -102,8 +102,6 @@ internal fun AndroidLyricsShareSheet(
     // The 9:16 story is what these are mostly made for, so it is where the
     // sheet opens; the card cut to its lines is one tap away.
     var story by remember(request) { mutableStateOf(true) }
-    // Remembered across shares: someone who takes the mark off wants it off.
-    val showLogo by AppSettings.lyricsCardLogo.collectAsStateWithLifecycle()
 
     // The song's animated covers, each offered as a background when it exists.
     // The player's own gradient is the default, and all there is until these
@@ -141,13 +139,13 @@ internal fun AndroidLyricsShareSheet(
     // preview runs it on the song's own clock, so what is shared is what was
     // seen. [image] is the still card, for the frame's shape and for a PNG.
     var painter by remember(request) { mutableStateOf<LyricsCardPainter?>(null) }
-    LaunchedEffect(request, story, showLogo, background, asVideo) {
+    LaunchedEffect(request, story, background, asVideo) {
         image = null
         painter = null
         failed = false
         saved = false
         runCatching {
-            val paint = lyricsCardPainter(context, request, story, showLogo, transparent = clip != null)
+            val paint = lyricsCardPainter(context, request, story, showLogo = false, transparent = clip != null)
             image = withContext(Dispatchers.Default) { paint.render(null) }
             painter = paint
         }.onFailure { failed = true }
@@ -157,13 +155,13 @@ internal fun AndroidLyricsShareSheet(
     var exporting by remember(request) { mutableStateOf(false) }
     var exported by remember(request) { mutableStateOf<Pair<Any, File>?>(null) }
     suspend fun videoFile(): File? {
-        val look = listOf(clip, story, showLogo)
+        val look = listOf(clip, story)
         exported?.takeIf { it.first == look && it.second.exists() }?.let { return it.second }
         exporting = true
         return try {
             // The export lays its own background — the clip, or the backdrop —
             // so the card it is handed is always the bare one.
-            val overlay = lyricsCardPainter(context, request, story, showLogo, transparent = true)
+            val overlay = lyricsCardPainter(context, request, story, showLogo = false, transparent = true)
             exportLyricsVideo(context, request, clip, overlay, portrait = story)
                 ?.also { exported = look to it }
         } finally {
@@ -281,31 +279,6 @@ internal fun AndroidLyricsShareSheet(
                 },
             )
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(PlainFill)
-                    .toggleable(
-                        value = showLogo,
-                        role = Role.Switch,
-                        onValueChange = {
-                            haptics.play(Haptic.Tap)
-                            AppSettings.setLyricsCardLogo(it)
-                        },
-                    )
-                    .padding(start = 18.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.lyrics_share_show_logo),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White,
-                    modifier = Modifier.weight(1f),
-                )
-                // The row is the toggle; the switch only shows its state.
-                IosSwitch(checked = showLogo, onCheckedChange = null)
-            }
 
             if (failed) {
                 Text(

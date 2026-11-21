@@ -348,35 +348,9 @@ private val YT_THUMB_NAME_REGEX = Regex("/(default|mqdefault|hqdefault|sddefault
 /** The renditions an old or low-resolution upload doesn't have: each answers 404 for it. */
 private val YT_UPGRADED_RENDITIONS = setOf("sddefault", "hq720", "maxresdefault")
 
-internal fun upgradeYouTubeThumbnail(url: String, px: Int): String {
-    val match = YT_THUMB_NAME_REGEX.find(url) ?: return url
-    val current = match.groupValues[1]
-    val target = when {
-        px >= 480 -> "maxresdefault"
-        px >= 240 -> "sddefault"
-        // A row keeps the small copy it came with, but an upgraded URL — one
-        // read back off the lock screen's artwork, say — comes back down to
-        // the one every video has, rather than a list row loading a 1280px
-        // cover, or nothing, where the video has no such size.
-        current in YT_UPGRADED_RENDITIONS -> "hqdefault"
-        else -> return url
-    }
-    return if (target == current) url else withRendition(url, match, target)
-}
+internal fun upgradeYouTubeThumbnail(url: String, px: Int): String = url
 
-/**
- * The copy every YouTube video has, for a thumbnail [artworkAt] asked a larger
- * rendition of; null when [url] is no such thumbnail. Old and low-resolution
- * uploads have no `sddefault` or `maxresdefault` (YouTube answers 404), so
- * whatever loads one of those needs this to fall back on — and a loader that
- * can't fall back should be handed this instead.
- */
-fun youTubeThumbnailFallback(url: String): String? {
-    if (!isYouTubeThumbnailHost(url)) return null
-    val match = YT_THUMB_NAME_REGEX.find(url) ?: return null
-    if (match.groupValues[1] !in YT_UPGRADED_RENDITIONS) return null
-    return withRendition(url, match, "hqdefault")
-}
+fun youTubeThumbnailFallback(url: String): String? = null
 
 /**
  * [url] naming [rendition] instead. The query (`sqp=…&rs=…`) is dropped: it

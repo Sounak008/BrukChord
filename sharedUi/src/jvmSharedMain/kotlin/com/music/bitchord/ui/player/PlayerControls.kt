@@ -49,6 +49,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -982,8 +983,9 @@ private data class SliderInk(val active: Color, val inactive: Color, val marker:
 
 /** Null where the bars are drawn as they always were. */
 @Composable
-private fun sliderInk(): SliderInk? =
-    if (LocalPlayerChrome.current && SLIDERS_DODGED) {
+private fun sliderInk(): SliderInk? {
+    val coloredSeekBar by PlayerSettings.coloredSeekBar.collectAsStateWithLifecycle()
+    return if (LocalPlayerChrome.current && coloredSeekBar && SLIDERS_DODGED) {
         SliderInk(
             active = sliderChromeInk(),
             // Enough of the cover to read as track, well short of the played part.
@@ -993,14 +995,10 @@ private fun sliderInk(): SliderInk? =
     } else {
         null
     }
+}
 
 /**
- * Translucent circular button used for the track menu and the like control.
- *
- * [active] brightens the disc rather than only the glyph: this sits on album
- * artwork of any colour, and a white icon on a white-ish sleeve has no tint
- * change left to make. The filled star carries the state as a shape too —
- * see [BitChordIcons.StarFilled].
+ * Circular icon action used for the track menu and the like control beside song name.
  */
 @Composable
 internal fun CircleGlyph(
@@ -1012,17 +1010,31 @@ internal fun CircleGlyph(
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
-    val discAlpha by animateFloatAsState(
-        targetValue = if (active) 0.34f else CIRCLE_DISC_ALPHA,
-        label = "glyphDisc",
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.82f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "glyphPressScale",
     )
     val chrome = LocalPlayerChrome.current
+    val tint = when {
+        active -> if (chrome) brightRowInk() else Color.White
+        chrome -> brightRowInk().copy(alpha = 0.75f)
+        else -> chromeWhite(0.75f)
+    }
     Box(
         modifier = modifier
-            .size(34.dp)
-            .clip(CircleShape)
+            .size(36.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null,
             ) {
                 haptics.play(haptic)
@@ -1030,17 +1042,6 @@ internal fun CircleGlyph(
             },
         contentAlignment = Alignment.Center,
     ) {
-        // The disc carries the blend, dodged as the bottom row's glyphs are, and
-        // the glyph sits on it in plain white. The ink is mixed in at a few times
-        // the plain disc's strength: a dodge laid on this thinly is next to nothing.
-        Box(
-            Modifier
-                .matchParentSize()
-                .vibrantChrome(chrome)
-                .background(discFill(chrome, discAlpha)),
-        )
-        // Outside the blend: the rim is light catching the edge, not ink.
-        Box(Modifier.matchParentSize().glassRim(CircleShape))
         Crossfade(
             targetState = icon,
             animationSpec = tween(durationMillis = 180),
@@ -1049,8 +1050,10 @@ internal fun CircleGlyph(
             Icon(
                 imageVector = glyph,
                 contentDescription = contentDescription,
-                tint = Color.White,
-                modifier = Modifier.size(19.dp),
+                tint = tint,
+                modifier = Modifier
+                    .size(23.dp)
+                    .vibrantChrome(chrome),
             )
         }
     }
@@ -1111,17 +1114,11 @@ internal fun GlassDiscPair(
     modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit,
 ) {
-    val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val autoMixHold = rememberAutoMixFrostHold()
-    Box(modifier) {
-        Box(
-            Modifier
-                .matchParentSize()
-                .clip(DiscPairShape)
-                .glassFrost(hazeState, flat = reduceDynamicBlur || overlayOpen() || autoMixHold()),
-        )
-        Row(verticalAlignment = Alignment.CenterVertically, content = content)
-    }
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        content = content,
+    )
 }
 
 /**

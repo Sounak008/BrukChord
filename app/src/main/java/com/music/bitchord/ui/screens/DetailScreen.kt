@@ -577,7 +577,10 @@ fun DetailScreen(
             // An artist's photograph dissolves into [ArtworkPalette.wash]; an album
             // page takes the solid color picked up from the lowest edge of the album;
             // a playlist takes [ArtworkPalette.background].
-            val pageColor = if (isArtist) palette.wash else if (isAlbum) albumSolidColor else palette.background
+            // Full screen album art is enabled only for tall portrait animated canvases (Apple motion 3:4 etc.),
+            // and disabled for static album covers and square/almost square animated covers.
+            val showFullScreenAlbumArt = isAlbum && fullBleedArtwork && visibleCanvas != null && visibleCanvas.portraitUrl != null
+            val pageColor = if (isArtist) palette.wash else if (showFullScreenAlbumArt) albumSolidColor else palette.background
             BoxWithConstraints(Modifier.fillMaxSize().background(pageColor)) {
                 // Measured rather than read off the window. The player runs
                 // full-screen at every window size, so this page's own width in
@@ -598,7 +601,7 @@ fun DetailScreen(
                 // The artist photo is drawn behind the list rather than in it, so
                 // both need to agree on its height without being able to ask each
                 // other — see [artHeight]. An album similarly displays its full-bleed
-                // artwork and ambient curved blur behind the list.
+                // artwork and ambient curved blur behind the list when tall motion artwork is present.
                 if (isArtist) {
                     PageBackground(
                         page = page,
@@ -609,10 +612,10 @@ fun DetailScreen(
                         heroUrl = appleArt?.heroUrl,
                         modifier = Modifier.matchParentSize(),
                     )
-                } else if (isAlbum) {
+                } else if (showFullScreenAlbumArt) {
                     AlbumPageBackground(
                         page = page,
-                        canvas = canvas,
+                        canvas = visibleCanvas,
                         blurImage = albumEdgeBlur,
                         solidColor = albumSolidColor,
                         palette = palette,
@@ -650,7 +653,7 @@ fun DetailScreen(
                         onToggleLibrary = onToggleLibrary,
                         onDownloadAll = folder?.onDownload?.let { download -> { download(songs) } },
                         onFrameCaptured = { canvasFrame = it },
-                        isAlbum = isAlbum,
+                        isAlbum = showFullScreenAlbumArt,
                         artHeight = albumArtHeight,
                     )
                 }
@@ -1047,6 +1050,12 @@ private fun ReleaseHeader(
                         modifier = Modifier.matchParentSize(),
                     )
                 }
+                // Dimmer overlay for better contrast and readability of surrounding text
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(Color.Black.copy(alpha = 0.18f)),
+                )
             }
         }
 
@@ -1538,6 +1547,12 @@ private fun AlbumPageBackground(
                     modifier = Modifier.matchParentSize(),
                 )
             }
+            // Dimmer overlay for better readability of header titles
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(Color.Black.copy(alpha = 0.22f)),
+            )
         }
     }
 }

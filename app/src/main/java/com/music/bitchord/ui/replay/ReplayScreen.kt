@@ -193,7 +193,12 @@ fun ReplayScreen(
                         )
                     }
                     item("open") {
-                        ReplayActionRow(BitChordIcons.Play, stringResource(R.string.play_your_replay), dark) {
+                        ReplayActionRow(
+                            icon = BitChordIcons.Play,
+                            label = stringResource(R.string.play_your_replay),
+                            dark = dark,
+                            credit = "(From BitChord)",
+                        ) {
                             onOpenStory(ReplayStoryPage.INTRO)
                         }
                     }
@@ -404,7 +409,27 @@ private fun replayChartIndex(summary: ReplaySummary, page: ReplayStoryPage): Int
  * it was the loudest thing there and read like one.
  */
 @Composable
-private fun ReplayActionRow(icon: ImageVector, label: String, dark: Boolean, onClick: () -> Unit) {
+private fun ReplayActionRow(
+    icon: ImageVector,
+    label: String,
+    dark: Boolean,
+    onClick: () -> Unit,
+) = ReplayActionRow(
+    icon = icon,
+    label = label,
+    dark = dark,
+    credit = null,
+    onClick = onClick,
+)
+
+@Composable
+private fun ReplayActionRow(
+    icon: ImageVector,
+    label: String,
+    dark: Boolean,
+    credit: String? = null,
+    onClick: () -> Unit,
+) {
     val textColor = if (dark) Color.White else Color.Black
     Row(
         Modifier
@@ -423,12 +448,24 @@ private fun ReplayActionRow(icon: ImageVector, label: String, dark: Boolean, onC
             modifier = Modifier.size(18.dp),
         )
         Spacer(Modifier.width(12.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleMedium,
-            color = textColor,
+        Row(
             modifier = Modifier.weight(1f),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleMedium,
+                color = textColor,
+            )
+            if (credit != null) {
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = credit,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = textColor.copy(alpha = 0.45f),
+                )
+            }
+        }
         Icon(
             imageVector = BitChordIcons.ChevronRight,
             contentDescription = null,

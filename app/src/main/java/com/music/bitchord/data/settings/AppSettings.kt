@@ -658,6 +658,9 @@ object AppSettings {
     /** Shows the track's total duration at the end of the player scrubber. */
     val showTotalDuration = MutableStateFlow(false)
 
+    /** Subtly tints the seek and volume bars with the track's dominant colors. Enabled by default. */
+    val coloredSeekBar = MutableStateFlow(true)
+
     /**
      * What the main player stands on below the artwork.
      *
@@ -1168,6 +1171,7 @@ object AppSettings {
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
         fullBleedDetailArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_DETAIL_ARTWORK, false)
         showTotalDuration.value = prefs.getBoolean(KEY_SHOW_TOTAL_DURATION, false)
+        coloredSeekBar.value = prefs.getBoolean(KEY_COLORED_SEEKBAR, true)
         // The old legacy mesh switch answers until a theme has been picked.
         playerTheme.value = runCatching {
             PlayerTheme.valueOf(prefs.getString(KEY_PLAYER_THEME, null).orEmpty())
@@ -1890,6 +1894,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_SHOW_TOTAL_DURATION, value).apply()
     }
 
+    fun setColoredSeekBar(value: Boolean) {
+        coloredSeekBar.value = value
+        prefs.edit().putBoolean(KEY_COLORED_SEEKBAR, value).apply()
+    }
+
     fun setPlayerTheme(value: PlayerTheme) {
         playerTheme.value = value
         prefs.edit().putString(KEY_PLAYER_THEME, value.name).apply()
@@ -2514,6 +2523,7 @@ object AppSettings {
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_FULL_BLEED_DETAIL_ARTWORK = "full_bleed_detail_artwork"
     private const val KEY_SHOW_TOTAL_DURATION = "show_total_duration"
+    private const val KEY_COLORED_SEEKBAR = "colored_seekbar"
     private const val KEY_PLAYER_THEME = "player_theme"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
     private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"
