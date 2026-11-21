@@ -7780,7 +7780,8 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun loadLyricsForCurrentTrack() {
-        val currentSong = player?.currentMediaItem?.toSong() ?: run {
+        val currentMediaItem = player?.currentMediaItem
+        val currentSong = currentMediaItem?.toSong() ?: run {
             serviceLyrics = null
             stopLyricsTicker()
             return
@@ -7801,8 +7802,7 @@ class PlaybackService : MediaLibraryService() {
             // reading it is the whole difference between showing the lyrics
             // offline and going to the network for them.
             val localUri = currentSong.localUri
-                ?: player?.currentMediaItem?.let { resolveLocalUri(currentSong.videoId, it) }
-                    ?.toString()
+                ?: resolveLocalUri(currentSong.videoId, currentMediaItem)?.toString()
             var lines: List<LyricLine>? = null
             if (localUri != null) {
                 lines = EmbeddedLyrics.forUri(this@PlaybackService, localUri, currentSong.localPath)

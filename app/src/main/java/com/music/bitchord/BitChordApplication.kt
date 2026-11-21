@@ -135,6 +135,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
             initLastfm()
             LastPlayed.init(this@BitChordApplication)
             com.music.bitchord.data.personalmix.PersonalMixStore.init(this@BitChordApplication)
+            com.music.bitchord.data.replaymix.ReplayMixStore.init(this@BitChordApplication)
             BoundedContextPersistence.init(this@BitChordApplication)
             com.music.bitchord.playback.PartyPersonalQueueStash.init(this@BitChordApplication)
             OriginalVersion.init(this@BitChordApplication)

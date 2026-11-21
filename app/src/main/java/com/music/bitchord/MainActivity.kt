@@ -276,6 +276,7 @@ import com.music.bitchord.ui.components.MiniPlayer
 import com.music.bitchord.ui.components.QueueActionNotice
 import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
+import com.music.bitchord.ui.components.TopBarDiceButton
 import com.music.bitchord.ui.screens.SegmentedControl
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.sharedui.resources.Res as SharedRes
@@ -297,6 +298,7 @@ import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.personalmix.PersonalMixRules
+import com.music.bitchord.data.replaymix.ReplayMixRules
 import com.music.bitchord.data.moodsmix.MoodsMixRules
 import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.model.isArtistsShelf
@@ -305,6 +307,7 @@ import com.music.bitchord.data.model.isQuickPicksShelf
 import com.music.bitchord.data.model.isRecentsOrListenAgainShelf
 import com.music.bitchord.data.model.ShelfLayout
 import com.music.bitchord.ui.screens.PersonalMixScreen
+import com.music.bitchord.ui.screens.ReplayMixScreen
 import com.music.bitchord.ui.screens.MoodsMixScreen
 import com.music.bitchord.data.TopPicks
 import com.music.bitchord.data.model.TopPick
@@ -851,6 +854,13 @@ private fun BitChordApp(
     val personalMixTitle = stringResource(R.string.personal_mix)
     val personalMixSubtitle = stringResource(R.string.personal_mix_subtitle)
 
+    val replayMixQueue by viewModel.replayMixQueue.collectAsStateWithLifecycle()
+    val replayMixLoading by viewModel.replayMixLoading.collectAsStateWithLifecycle()
+    val replayMixGrowing by viewModel.replayMixGrowing.collectAsStateWithLifecycle()
+    val replayMixListState = rememberLazyListState()
+    val replayMixTitle = stringResource(R.string.replay_mix)
+    val replayMixSubtitle = stringResource(R.string.replay_mix_subtitle)
+
     val moodsMixQueue by viewModel.moodsMixQueue.collectAsStateWithLifecycle()
     val moodsMixLoading by viewModel.moodsMixLoading.collectAsStateWithLifecycle()
     val selectedMood by viewModel.selectedMood.collectAsStateWithLifecycle()
@@ -859,7 +869,7 @@ private fun BitChordApp(
     val moodsMixSubtitle = stringResource(R.string.moods_mix_subtitle)
     val listenedArtists by viewModel.listenedArtists.collectAsStateWithLifecycle()
 
-    val homeWithPersonalMix = remember(homeState, signedIn, personalMixTitle, personalMixSubtitle, moodsMixTitle, moodsMixSubtitle, listenedArtists) {
+    val homeWithPersonalMix = remember(homeState, signedIn, personalMixTitle, personalMixSubtitle, replayMixTitle, replayMixSubtitle, moodsMixTitle, moodsMixSubtitle, listenedArtists) {
         if (!signedIn) return@remember homeState
         val base = (homeState as? UiState.Success)?.data ?: return@remember homeState
         val withoutArtists = base.filterNot { isArtistsShelf(it.title) || it.layout == ShelfLayout.CIRCLES }
@@ -870,6 +880,13 @@ private fun BitChordApp(
             thumbnailUrl = "local:cover_personal_mix",
             videoId = null,
             browseId = PersonalMixRules.PERSONAL_MIX_BROWSE_ID,
+        )
+        val replayMixItem = ShelfItem(
+            title = replayMixTitle,
+            subtitle = replayMixSubtitle,
+            thumbnailUrl = "local:cover_replay_mix",
+            videoId = null,
+            browseId = ReplayMixRules.REPLAY_MIX_BROWSE_ID,
         )
         val moodsMixItem = ShelfItem(
             title = moodsMixTitle,
@@ -883,16 +900,19 @@ private fun BitChordApp(
             val existing = withoutArtists[madeForYouIndex]
             val filtered = existing.items.filterNot {
                 it.browseId == PersonalMixRules.PERSONAL_MIX_BROWSE_ID ||
-                    it.browseId == MoodsMixRules.MOODS_MIX_BROWSE_ID
+                    it.browseId == MoodsMixRules.MOODS_MIX_BROWSE_ID ||
+                    it.browseId == ReplayMixRules.REPLAY_MIX_BROWSE_ID ||
+                    it.title.equals("Replay Mix", ignoreCase = true) ||
+                    it.title.equals("Replay", ignoreCase = true)
             }
             existing.copy(
                 title = "Mixed for you",
-                items = listOf(personalMixItem, moodsMixItem) + filtered,
+                items = listOf(personalMixItem, replayMixItem, moodsMixItem) + filtered,
             )
         } else {
             HomeShelf(
                 title = "Mixed for you",
-                items = listOf(personalMixItem, moodsMixItem),
+                items = listOf(personalMixItem, replayMixItem, moodsMixItem),
                 layout = ShelfLayout.CARDS,
             )
         }
@@ -2865,10 +2885,11 @@ private fun BitChordApp(
                         replayLandingPage = ReplayStoryPage.INTRO
                         navigator.push(AppRoute.Replay)
                     }
-                    PlaybackSourceType.EXPLORE -> if (sourceId == PersonalMixRules.PERSONAL_MIX_BROWSE_ID) {
-                        navigator.push(AppRoute.PersonalMix)
-                    } else {
-                        selectedTab = TAB_EXPLORE
+                    PlaybackSourceType.EXPLORE -> when (sourceId) {
+                        PersonalMixRules.PERSONAL_MIX_BROWSE_ID -> navigator.push(AppRoute.PersonalMix)
+                        ReplayMixRules.REPLAY_MIX_BROWSE_ID -> navigator.push(AppRoute.ReplayMix)
+                        MoodsMixRules.MOODS_MIX_BROWSE_ID -> navigator.push(AppRoute.MoodsMix)
+                        else -> selectedTab = TAB_EXPLORE
                     }
                     PlaybackSourceType.SHARED_LINK -> {
                         val id = sourceId ?: return@openSource
@@ -3101,6 +3122,45 @@ private fun BitChordApp(
                                 onSongLongPress = openSongMenu,
                                 onSongSwipe = onSongSwipe,
                                 onRetry = { viewModel.loadPersonalMix(forceRebuild = true) },
+                                contentPadding = listPadding,
+                                currentSong = player.song,
+                                isPlaying = player.isPlaying,
+                            )
+                        } else if (pageRoute == AppRoute.ReplayMix) {
+                            LaunchedEffect(Unit) {
+                                viewModel.loadReplayMix(forceRebuild = false)
+                            }
+                            ReplayMixScreen(
+                                tracksState = replayMixQueue,
+                                rebuilding = replayMixLoading,
+                                isGrowing = true,
+                                listState = replayMixListState,
+                                onPlay = {
+                                    val songs = (replayMixQueue as? UiState.Success)?.data.orEmpty()
+                                    if (songs.isNotEmpty()) {
+                                        playFrom(songs, 0, QueueSource(context.getString(R.string.replay_mix), PlaybackSourceType.EXPLORE))
+                                    }
+                                },
+                                onShuffle = {
+                                    val songs = (replayMixQueue as? UiState.Success)?.data.orEmpty()
+                                    if (songs.isNotEmpty()) {
+                                        playFrom(songs.shuffled(), 0, QueueSource(context.getString(R.string.replay_mix), PlaybackSourceType.EXPLORE))
+                                    }
+                                },
+                                onNewMix = { viewModel.newReplayMix() },
+                                onToggleLike = {
+                                    player.song?.let { viewModel.toggleLike(it.videoId) }
+                                },
+                                currentLiked = player.song?.let {
+                                    likeStatuses[it.videoId] == LikeStatus.LIKE
+                                } == true,
+                                onSongClick = { songs, index ->
+                                    if (index >= songs.size - 5) viewModel.growReplayMix()
+                                    playFrom(songs, index, QueueSource(context.getString(R.string.replay_mix), PlaybackSourceType.EXPLORE))
+                                },
+                                onSongLongPress = openSongMenu,
+                                onSongSwipe = onSongSwipe,
+                                onRetry = { viewModel.loadReplayMix(forceRebuild = true) },
                                 contentPadding = listPadding,
                                 currentSong = player.song,
                                 isPlaying = player.isPlaying,
@@ -3574,6 +3634,9 @@ private fun BitChordApp(
                                     when {
                                         browseId == PersonalMixRules.PERSONAL_MIX_BROWSE_ID -> {
                                             navigator.push(AppRoute.PersonalMix)
+                                        }
+                                        browseId == ReplayMixRules.REPLAY_MIX_BROWSE_ID -> {
+                                            navigator.push(AppRoute.ReplayMix)
                                         }
                                         browseId == MoodsMixRules.MOODS_MIX_BROWSE_ID -> {
                                             navigator.push(AppRoute.MoodsMix)
@@ -4063,6 +4126,7 @@ private fun BitChordApp(
                         AppRoute.EqualizerPresets -> stringResource(R.string.equalizer_preset)
                         AppRoute.Replay -> stringResource(R.string.replay)
                         AppRoute.PersonalMix -> stringResource(R.string.personal_mix)
+                        AppRoute.ReplayMix -> stringResource(R.string.replay_mix)
                         AppRoute.MoodsMix -> stringResource(R.string.moods_mix)
                         null -> when {
                             detail != null && detailActiveShelf != null -> detailActiveShelf?.title.orEmpty()
@@ -4377,16 +4441,36 @@ private fun BitChordApp(
                             // Not on a release page, whose pill already carries
                             // three of its own controls — Apple Music leaves the
                             // profile off its album pages too.
-                            if (!isReleaseDetail) TopBarAccountButton(
-                                account = account,
-                                onClick = {
-                                    if (signedIn) {
-                                        viewModel.loadChannels()
-                                        showAccountSelector = true
-                                    } else navigator.push(AppRoute.Settings)
-                                },
-                                onSwipeProfile = { forward -> viewModel.stepProfile(forward) },
-                            )
+                            if (!isReleaseDetail) {
+                                var isPickingTasteSong by remember { mutableStateOf(false) }
+                                TopBarDiceButton(
+                                    onClick = {
+                                        scope.launch {
+                                            if (isPickingTasteSong) return@launch
+                                            isPickingTasteSong = true
+                                            val song = runCatching { viewModel.getRandomTasteSong() }.getOrNull()
+                                            isPickingTasteSong = false
+                                            if (song != null) {
+                                                playRadio(
+                                                    song,
+                                                    QueueSource(context.getString(R.string.lucky_dice), PlaybackSourceType.EXPLORE),
+                                                )
+                                            }
+                                        }
+                                    },
+                                    isLoading = isPickingTasteSong,
+                                )
+                                TopBarAccountButton(
+                                    account = account,
+                                    onClick = {
+                                        if (signedIn) {
+                                            viewModel.loadChannels()
+                                            showAccountSelector = true
+                                        } else navigator.push(AppRoute.Settings)
+                                    },
+                                    onSwipeProfile = { forward -> viewModel.stepProfile(forward) },
+                                )
+                            }
                         }
                     },
                 )

@@ -1141,6 +1141,16 @@
     <string name="moods_mix_meta" translatable="false">%1$d tracks</string>
     <string name="moods_mix_empty" translatable="false">No tracks found for this mood yet. Try another mood or listen to more music to seed your mix.</string>
 
+    <string name="replay_mix" translatable="false">Replay Mix</string>
+    <string name="replay_mix_subtitle" translatable="false">Your heavy rotation and most replayed tracks</string>
+    <string name="replay_mix_tracks_header" translatable="false">Replay tracks · %1$d</string>
+    <string name="replay_mix_meta" translatable="false">%1$d tracks</string>
+    <string name="replay_mix_empty" translatable="false">No replayed tracks yet. As you replay your favorite songs in BrukChord or YouTube Music, your Replay Mix will automatically build here.</string>
+
+    <string name="lucky_dice" translatable="false">Feeling Lucky</string>
+    <string name="playing_random_taste" translatable="false">Playing %1$s from your taste</string>
+    <string name="no_taste_history_yet" translatable="false">No listening history yet</string>
+
 
     <string name="shelf_similar_to">Similar to %1$s</string>
 

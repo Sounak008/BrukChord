@@ -814,6 +814,12 @@ private fun HeroCard(
             item.thumbnailUrl == "local:personal_mix" ||
             item.thumbnailUrl == "local:cover_personal_mix" ||
             item.title.equals("Personal Mix", ignoreCase = true)
+        val isReplayMix = item.browseId == "local:replay_mix" ||
+            item.browseId == "bitchord:replay_mix" ||
+            item.browseId == "replay_mix" ||
+            item.thumbnailUrl == "local:replay_mix" ||
+            item.thumbnailUrl == "local:cover_replay_mix" ||
+            item.title.equals("Replay Mix", ignoreCase = true)
         val isMoodsMix = item.browseId == "local:moods_mix" ||
             item.browseId == "bitchord:moods_mix" ||
             item.browseId == "moods_mix" ||
@@ -824,6 +830,13 @@ private fun HeroCard(
         if (isPersonalMix) {
             Image(
                 painter = painterResource(Res.drawable.cover_personal_mix),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else if (isReplayMix) {
+            Image(
+                painter = painterResource(Res.drawable.cover_replay_mix),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -1099,6 +1112,12 @@ internal fun ShelfCard(
             item.thumbnailUrl == "local:personal_mix" ||
             item.thumbnailUrl == "local:cover_personal_mix" ||
             item.title.equals("Personal Mix", ignoreCase = true)
+        val isReplayMix = item.browseId == "local:replay_mix" ||
+            item.browseId == "bitchord:replay_mix" ||
+            item.browseId == "replay_mix" ||
+            item.thumbnailUrl == "local:replay_mix" ||
+            item.thumbnailUrl == "local:cover_replay_mix" ||
+            item.title.equals("Replay Mix", ignoreCase = true)
         val isMoodsMix = item.browseId == "local:moods_mix" ||
             item.browseId == "bitchord:moods_mix" ||
             item.browseId == "moods_mix" ||
@@ -1118,6 +1137,24 @@ internal fun ShelfCard(
                 ) {
                     Image(
                         painter = painterResource(Res.drawable.cover_personal_mix),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
+                }
+            }
+            isReplayMix -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(ShelfCardShape)
+                        .thumbnailBorder(ShelfCardShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    Image(
+                        painter = painterResource(Res.drawable.cover_replay_mix),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),

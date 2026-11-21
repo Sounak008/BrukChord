@@ -88,6 +88,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -179,7 +180,15 @@ import com.music.bitchord.ui.components.trackColumnWidth
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
+import androidx.compose.ui.graphics.ImageBitmap
+import com.music.bitchord.ui.player.CANVAS_FRAME_CAPTURE_PX
+import com.music.bitchord.ui.player.CURVED_BLUR_COVERAGE
+import com.music.bitchord.ui.player.CurvedBlurMaskState
+import com.music.bitchord.ui.player.drawCurvedArtworkMask
 import com.music.bitchord.ui.player.CanvasArtworkPlayer
+import com.music.bitchord.ui.player.CurvedBottomEdgeBlurBackdrop
+import com.music.bitchord.ui.player.rememberBottomEdgeBlur
+import com.music.bitchord.ui.player.rememberBottomSolidColor
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlin.math.roundToInt
@@ -468,6 +477,11 @@ fun DetailScreen(
     // qualifies and the badge would be decoration rather than information.
     val downloadedTint = palette.accent.takeUnless { page.browseId.startsWith("local:") }
 
+    val isAlbum = page.type == BrowseType.ALBUM ||
+        page.browseId.startsWith("MPREb") ||
+        page.browseId.startsWith("VLOLAK") ||
+        page.browseId.startsWith("OLAK")
+
     // Animated cover art on the header, the same feature the player has.
     // Albums only: a playlist's artwork is a collage and an artist page's is a
     // photograph, and neither is something a label publishes a canvas for.
@@ -478,17 +492,36 @@ fun DetailScreen(
     // which case the tracks themselves know who it is.
     val credit = page.headerLines(songs.size).first.ifBlank { songs.firstOrNull()?.artist.orEmpty() }
     var canvas by remember(page.browseId) { mutableStateOf<CanvasArtwork?>(null) }
-    LaunchedEffect(page.browseId, page.title, credit, canvasEnabled, prioritizeSpotifyCanvas) {
+    var canvasFrame by remember(page.browseId) { mutableStateOf<ImageBitmap?>(null) }
+    val albumSolidColor = rememberBottomSolidColor(
+        imageUrl = page.thumbnailUrl,
+        canvasFrame = canvasFrame,
+        defaultColor = palette.background,
+    )
+    val albumEdgeBlur = rememberBottomEdgeBlur(
+        imageUrl = page.thumbnailUrl,
+        canvasFrame = canvasFrame,
+        prepare = isAlbum,
+    )
+    val firstSong = songs.firstOrNull()
+    LaunchedEffect(page.browseId, page.title, credit, songs.size, firstSong?.videoId, canvasEnabled, prioritizeSpotifyCanvas) {
         // An artist's clip is set below, by the lookup that finds it.
         if (isArtist) return@LaunchedEffect
-        if (!canvasEnabled || page.type != BrowseType.ALBUM) {
+        if (!canvasEnabled || !isAlbum) {
             canvas = null
             return@LaunchedEffect
         }
-        // As on the player: the credit fills in once the tracks load, so this
-        // can run twice. Keep a clip that is already playing if the second
-        // pass comes back empty.
-        canvas = CanvasRepository.canvasForAlbum(page.title, credit) ?: canvas
+        val artistName = credit.ifBlank { firstSong?.artist.orEmpty() }
+        var found: CanvasArtwork? = null
+        if (page.title.isNotBlank() && artistName.isNotBlank()) {
+            found = CanvasRepository.canvasForAlbum(page.title, artistName)
+        }
+        if (found == null && firstSong != null) {
+            found = CanvasRepository.canvasFor(firstSong)
+        }
+        if (found != null) {
+            canvas = found
+        }
     }
     // An artist's clip comes with the same Apple lookup as its photograph.
     val artistVideo = appleArt?.videoUrl
@@ -520,11 +553,10 @@ fun DetailScreen(
         modifier = modifier.fillMaxSize(),
     ) { targetShelf ->
         if (targetShelf == null) {
-            // An artist's photograph dissolves into [ArtworkPalette.wash]; a
-            // release's sleeve sits framed on one flat colour with nothing to
-            // dissolve, so it takes the same [ArtworkPalette.background] the
-            // bars at either end of the screen are already fading into.
-            val pageColor = if (isArtist) palette.wash else palette.background
+            // An artist's photograph dissolves into [ArtworkPalette.wash]; an album
+            // page takes the solid color picked up from the lowest edge of the album;
+            // a playlist takes [ArtworkPalette.background].
+            val pageColor = if (isArtist) palette.wash else if (isAlbum) albumSolidColor else palette.background
             BoxWithConstraints(Modifier.fillMaxSize().background(pageColor)) {
                 // Measured rather than read off the window. The player runs
                 // full-screen at every window size, so this page's own width in
@@ -535,6 +567,7 @@ fun DetailScreen(
                 // math honest once the width it's fed is no longer guaranteed to be
                 // the narrow one it was written for.
                 val artHeight = (maxWidth / ARTIST_PHOTO_RATIO).coerceAtMost(maxHeight * 0.6f)
+                val albumArtHeight = (topBarContentPadding() + 410.dp).coerceAtMost(maxHeight * 0.70f)
                 val sleeveSize = (maxWidth * SLEEVE_FRACTION).coerceAtMost(maxHeight * SLEEVE_MAX_HEIGHT)
                 // A folder's grid view: the same column count the Library's
                 // "Show all" grids reach at this width.
@@ -542,8 +575,8 @@ fun DetailScreen(
 
                 // The artist photo is drawn behind the list rather than in it, so
                 // both need to agree on its height without being able to ask each
-                // other — see [artHeight]. A release has no such layer: its sleeve
-                // is an ordinary item at the top of the list.
+                // other — see [artHeight]. An album similarly displays its full-bleed
+                // artwork and ambient curved blur behind the list.
                 if (isArtist) {
                     PageBackground(
                         page = page,
@@ -552,6 +585,18 @@ fun DetailScreen(
                         artHeight = artHeight,
                         listState = listState,
                         heroUrl = appleArt?.heroUrl,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                } else if (isAlbum) {
+                    AlbumPageBackground(
+                        page = page,
+                        canvas = canvas,
+                        blurImage = albumEdgeBlur,
+                        solidColor = albumSolidColor,
+                        palette = palette,
+                        artHeight = albumArtHeight,
+                        listState = listState,
+                        onFrameCaptured = { canvasFrame = it },
                         modifier = Modifier.matchParentSize(),
                     )
                 }
@@ -581,6 +626,9 @@ fun DetailScreen(
                         onArtistClick = onArtistClick.takeIf { folder == null },
                         onToggleLibrary = onToggleLibrary,
                         onDownloadAll = folder?.onDownload?.let { download -> { download(songs) } },
+                        onFrameCaptured = { canvasFrame = it },
+                        isAlbum = isAlbum,
+                        artHeight = albumArtHeight,
                     )
                 }
             }
@@ -905,6 +953,9 @@ private fun ReleaseHeader(
     onToggleLibrary: (() -> Unit)?,
     /** The Cached songs folder's: saves every track on it to Downloads. Null hides it. */
     onDownloadAll: (() -> Unit)? = null,
+    onFrameCaptured: (ImageBitmap) -> Unit = {},
+    isAlbum: Boolean = false,
+    artHeight: Dp = 0.dp,
 ) {
     val (credit, meta) = page.headerLines(songs.size, songs.playtime())
     // Every row on a release carries the same credit — see [pageCredit] — so
@@ -919,43 +970,50 @@ private fun ReleaseHeader(
             .padding(top = topBarContentPadding(), bottom = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(
-            Modifier
-                .size(sleeveSize)
-                .shadow(SLEEVE_SHADOW, SLEEVE_SHAPE)
-                .background(palette.elevated)
-                .thumbnailBorder(SLEEVE_SHAPE),
-        ) {
-            // A cover that isn't there, or wouldn't load — a device folder, a
-            // playlist with nothing on it yet, files with no picture — gets a
-            // placeholder sleeve rather than an empty square. Not shown while a
-            // real one is still on its way, so a loading cover doesn't flash
-            // a glyph first.
-            var artFailed by remember(page.thumbnailUrl) { mutableStateOf(false) }
-            if (page.thumbnailUrl == null || artFailed) {
-                CoverPlaceholder(
-                    icon = page.placeholderIcon(),
-                    base = palette.elevated,
-                    tint = palette.onBackgroundVariant,
+        if (isAlbum) {
+            Spacer(Modifier.height(180.dp))
+        } else {
+            Box(
+                Modifier
+                    .size(sleeveSize)
+                    .shadow(SLEEVE_SHADOW, SLEEVE_SHAPE)
+                    .background(palette.elevated)
+                    .thumbnailBorder(SLEEVE_SHAPE),
+            ) {
+                // A cover that isn't there, or wouldn't load — a device folder, a
+                // playlist with nothing on it yet, files with no picture — gets a
+                // placeholder sleeve rather than an empty square. Not shown while a
+                // real one is still on its way, so a loading cover doesn't flash
+                // a glyph first.
+                var artFailed by remember(page.thumbnailUrl) { mutableStateOf(false) }
+                if (page.thumbnailUrl == null || artFailed) {
+                    CoverPlaceholder(
+                        icon = page.placeholderIcon(),
+                        base = palette.elevated,
+                        tint = palette.onBackgroundVariant,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
+                AsyncImage(
+                    model = page.thumbnailUrl.artworkAt(HEADER_ART_PX),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    onState = { artFailed = it is AsyncImagePainter.State.Error },
                     modifier = Modifier.matchParentSize(),
                 )
-            }
-            AsyncImage(
-                model = page.thumbnailUrl.artworkAt(HEADER_ART_PX),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                onState = { artFailed = it is AsyncImagePainter.State.Error },
-                modifier = Modifier.matchParentSize(),
-            )
-            // Animated cover art, inside the same frame. Always running:
-            // unlike the player's sleeve there is no transport here to follow,
-            // and the page is only up while it's being read.
-            canvas?.let { clip ->
-                CanvasArtworkPlayer(
-                    canvas = clip,
-                    isPlaying = true,
-                    modifier = Modifier.matchParentSize(),
-                )
+                // Animated cover art, inside the same frame. Always running:
+                // unlike the player's sleeve there is no transport here to follow,
+                // and the page is only up while it's being read.
+                canvas?.let { clip ->
+                    CanvasArtworkPlayer(
+                        canvas = clip,
+                        isPlaying = true,
+                        frameCapturePx = CANVAS_FRAME_CAPTURE_PX,
+                        onFrameCaptured = onFrameCaptured,
+                        refreshFrameEveryMs = 3_000L,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
             }
         }
 
@@ -1363,6 +1421,78 @@ private fun ArtistHeader(
                 // name sits under the artwork.
                 .padding(start = HEADER_GUTTER, end = HEADER_GUTTER, top = 14.dp, bottom = 7.dp),
         )
+    }
+}
+
+/**
+ * Ambient bottom-edge bleed blur background for album pages.
+ *
+ * Full-bleed artwork at the top with Apple Music-style curved bottom-edge blur.
+ * Plays animated motion artwork when available, falling back to the static cover,
+ * and dissolves softly along a slight U-curve into the solid background color.
+ */
+@Composable
+private fun AlbumPageBackground(
+    page: DetailPage,
+    canvas: CanvasArtwork?,
+    blurImage: ImageBitmap?,
+    solidColor: Color,
+    palette: ArtworkPalette,
+    artHeight: Dp,
+    listState: LazyListState,
+    onFrameCaptured: (ImageBitmap) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val artHeightPx = with(density) { artHeight.toPx() }
+    val art = page.thumbnailUrl.artworkAt(HEADER_ART_PX)
+    val albumBlurMaskState = remember { CurvedBlurMaskState() }
+
+    Box(modifier.clipToBounds()) {
+        // 1. Full-bleed blurred artwork backdrop — identical to Now Playing.
+        CurvedBottomEdgeBlurBackdrop(
+            image = blurImage,
+            solidColor = solidColor,
+            modifier = Modifier.matchParentSize(),
+        )
+
+        // 2. Sharp artwork (static image or animated motion canvas) scrolling with the header,
+        // dissolved along its bottom edge with the exact same curved mask as Now Playing.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(artHeight)
+                .offset { IntOffset(0, listState.headerTop(artHeightPx).roundToInt()) }
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    drawCurvedArtworkMask(
+                        maskState = albumBlurMaskState,
+                        effectiveArtworkHeight = size.height,
+                        coverage = CURVED_BLUR_COVERAGE,
+                    )
+                },
+        ) {
+            AsyncImage(
+                model = art,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(palette.elevated),
+            )
+
+            canvas?.let { clip ->
+                CanvasArtworkPlayer(
+                    canvas = clip,
+                    isPlaying = true,
+                    frameCapturePx = CANVAS_FRAME_CAPTURE_PX,
+                    onFrameCaptured = onFrameCaptured,
+                    refreshFrameEveryMs = 3_000L,
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
+        }
     }
 }
 

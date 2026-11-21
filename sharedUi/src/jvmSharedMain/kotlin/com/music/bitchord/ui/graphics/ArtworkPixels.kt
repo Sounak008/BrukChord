@@ -21,8 +21,15 @@ expect fun Image.toImageBitmap(): ImageBitmap
 expect fun imageBitmapOf(pixels: IntArray, width: Int, height: Int): ImageBitmap
 
 /** Every pixel of [image], packed ARGB, row by row. */
-fun ImageBitmap.argbPixels(): IntArray =
-    IntArray(width * height).also { readPixels(it) }
+fun ImageBitmap.argbPixels(): IntArray {
+    val pixels = IntArray(width * height)
+    return try {
+        readPixels(pixels)
+        pixels
+    } catch (_: Throwable) {
+        IntArray(0)
+    }
+}
 
 /** One colour the palette found, and how much of the image it covers. */
 class Swatch(val rgb: Int, val population: Int)

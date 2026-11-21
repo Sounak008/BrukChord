@@ -63,6 +63,29 @@ data class CanvasArtwork(
 
         return titleOk && artistOk && albumOk
     }
+
+    /**
+     * Whether this clip belongs to the album we asked about.
+     *
+     * Artist must match; album title matches either exactly or by prefix/containment
+     * (e.g. "The Wall" matches "The Wall (Remastered)" or "The Wall (Deluxe Edition)").
+     */
+    fun matchesAlbum(wantAlbum: String, wantArtist: String): Boolean {
+        val titleArtists = splitArtists(wantArtist)
+        val ourArtists = splitArtists(artist.orEmpty())
+        val artistOk = artist == null || wantArtist.isBlank() ||
+            (titleArtists.isNotEmpty() && ourArtists.isNotEmpty() &&
+                titleArtists.all { want -> ourArtists.any { it == want } })
+        if (!artistOk) return false
+
+        val cleanWant = wantAlbum.normalizeForMatch()
+        val cleanAlbum = (album ?: title)?.normalizeForMatch().orEmpty()
+        if (cleanWant.isBlank() || cleanAlbum.isBlank()) return true
+
+        return cleanAlbum == cleanWant ||
+            cleanAlbum.startsWith(cleanWant) ||
+            cleanWant.startsWith(cleanAlbum)
+    }
 }
 
 /**

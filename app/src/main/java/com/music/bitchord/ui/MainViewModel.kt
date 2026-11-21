@@ -116,6 +116,9 @@ import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.data.personalmix.PersonalMixEngine
 import com.music.bitchord.data.personalmix.PersonalMixRules
 import com.music.bitchord.data.personalmix.PersonalMixStore
+import com.music.bitchord.data.replaymix.ReplayMixEngine
+import com.music.bitchord.data.replaymix.ReplayMixRules
+import com.music.bitchord.data.replaymix.ReplayMixStore
 import com.music.bitchord.data.moodsmix.FlowMood
 import com.music.bitchord.data.moodsmix.MoodsMixEngine
 import com.music.bitchord.data.moodsmix.MoodsMixRules
@@ -187,6 +190,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val personalMixQueue: StateFlow<UiState<List<Song>>> = _personalMixQueue.asStateFlow()
     private val _personalMixLoading = MutableStateFlow(false)
     val personalMixLoading: StateFlow<Boolean> = _personalMixLoading.asStateFlow()
+
+    private val _replayMixQueue = MutableStateFlow<UiState<List<Song>>>(UiState.Loading)
+    val replayMixQueue: StateFlow<UiState<List<Song>>> = _replayMixQueue.asStateFlow()
+    private val _replayMixLoading = MutableStateFlow(false)
+    val replayMixLoading: StateFlow<Boolean> = _replayMixLoading.asStateFlow()
+    private val _replayMixGrowing = MutableStateFlow(false)
+    val replayMixGrowing: StateFlow<Boolean> = _replayMixGrowing.asStateFlow()
 
     private val _selectedMood = MutableStateFlow(FlowMood.CHILL)
     val selectedMood: StateFlow<FlowMood> = _selectedMood.asStateFlow()
@@ -3771,6 +3781,69 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun loadReplayMix(forceRebuild: Boolean = false) {
+        if (!forceRebuild) {
+            ReplayMixStore.readSnapshot()?.let { (songs, builtAt) ->
+                if (System.currentTimeMillis() - builtAt < ReplayMixStore.SNAPSHOT_TTL_MS) {
+                    _replayMixQueue.value = UiState.Success(songs)
+                    return
+                }
+            }
+        }
+        newReplayMix()
+    }
+
+    fun newReplayMix(limit: Int = ReplayMixRules.INITIAL_TRACKS) {
+        if (_replayMixLoading.value) return
+        viewModelScope.launch {
+            _replayMixLoading.value = true
+            _replayMixQueue.value = UiState.Loading
+            runCatching {
+                val appReplaySummary = runCatching {
+                    ListeningStats.summary(ReplayPeriod.ALL_TIME)
+                        ?: ListeningStats.summary(ReplayPeriod.THIS_YEAR)
+                }.getOrNull()
+                val appReplaySeeds = appReplaySummary?.songs?.map { it.song }.orEmpty()
+                val completedSeeds = PersonalMixStore.completedSongs.value
+                ReplayMixEngine.buildQueue(
+                    appReplaySeeds = appReplaySeeds,
+                    completedSeeds = completedSeeds,
+                    limit = limit,
+                )
+            }.fold(
+                onSuccess = {
+                    _replayMixQueue.value = UiState.Success(it)
+                    ReplayMixStore.saveSnapshot(it)
+                },
+                onFailure = {
+                    _replayMixQueue.value = UiState.Error(it.friendly())
+                },
+            )
+            _replayMixLoading.value = false
+        }
+    }
+
+    fun growReplayMix(limit: Int = ReplayMixRules.TOPUP_TRACKS) {
+        if (_replayMixLoading.value || _replayMixGrowing.value) return
+        val current = (_replayMixQueue.value as? UiState.Success)?.data.orEmpty()
+        if (current.isEmpty()) {
+            newReplayMix()
+            return
+        }
+        viewModelScope.launch {
+            _replayMixGrowing.value = true
+            runCatching {
+                ReplayMixEngine.growQueue(current, limit)
+            }.onSuccess { updated ->
+                if (updated.isNotEmpty()) {
+                    _replayMixQueue.value = UiState.Success(updated)
+                    ReplayMixStore.saveSnapshot(updated)
+                }
+            }
+            _replayMixGrowing.value = false
+        }
+    }
+
     fun selectMood(mood: FlowMood) {
         if (_selectedMood.value == mood && _moodsMixQueue.value is UiState.Success) return
         _selectedMood.value = mood
@@ -3820,6 +3893,57 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             _moodsMixLoading.value = false
         }
+    }
+
+    /**
+     * Picks a random track from the user's personal taste:
+     * - Completed songs from PersonalMixStore
+     * - Local Replay history from ListeningStats (ALL_TIME, THIS_YEAR, THIS_MONTH)
+     * - Cached Personal Mix & Replay Mix snapshots
+     * - YouTube recent history (when signed in or cached)
+     * - Liked songs from library
+     * - Quick picks as a zero-history fallback
+     */
+    suspend fun getRandomTasteSong(): Song? = withContext(Dispatchers.IO) {
+        val candidates = mutableListOf<Song>()
+
+        // 1. Completed songs from PersonalMixStore
+        candidates += PersonalMixStore.completedSongs.value
+
+        // 2. Local Replay history
+        runCatching {
+            (ListeningStats.summary(ReplayPeriod.ALL_TIME)
+                ?: ListeningStats.summary(ReplayPeriod.THIS_YEAR)
+                ?: ListeningStats.summary(ReplayPeriod.THIS_MONTH))?.songs?.map { it.song }
+        }.getOrNull()?.let { candidates += it }
+
+        // 3. Snapshots of Personal Mix & Replay Mix
+        PersonalMixStore.readSnapshot()?.first?.let { candidates += it }
+        ReplayMixStore.readSnapshot()?.first?.let { candidates += it }
+
+        // 4. YouTube recent history
+        runCatching {
+            YtMusicRepository.recentHistory().getOrNull().orEmpty()
+        }.getOrNull()?.let { candidates += it }
+
+        // 5. Liked songs from Library
+        (_library.value as? UiState.Success)?.data?.likedSongs?.let { candidates += it }
+
+        val pool = candidates.filter { it.videoId.isNotBlank() }.distinctBy { it.videoId }
+        if (pool.isNotEmpty()) {
+            return@withContext pool.random()
+        }
+
+        // 6. Fallback to Quick picks if user has zero history
+        val fallback = runCatching {
+            YtMusicRepository.quickPicks().getOrNull().orEmpty()
+        }.getOrDefault(emptyList()).filter { it.videoId.isNotBlank() }
+
+        if (fallback.isNotEmpty()) {
+            return@withContext fallback.random()
+        }
+
+        null
     }
 
     private fun saveCachedListenedArtists(items: List<ShelfItem>) {

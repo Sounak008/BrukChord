@@ -765,6 +765,48 @@ object BitChordIcons {
         }.build()
     }
 
+    /** Dice icon for playing a random song from user's taste. */
+    val Dice: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_dice",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = stroke,
+                strokeLineWidth = 2f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(7.5f, 3.5f)
+                lineTo(16.5f, 3.5f)
+                quadTo(20.5f, 3.5f, 20.5f, 7.5f)
+                lineTo(20.5f, 16.5f)
+                quadTo(20.5f, 20.5f, 16.5f, 20.5f)
+                lineTo(7.5f, 20.5f)
+                quadTo(3.5f, 20.5f, 3.5f, 16.5f)
+                lineTo(3.5f, 7.5f)
+                quadTo(3.5f, 3.5f, 7.5f, 3.5f)
+                close()
+            }
+            path(fill = stroke) {
+                val dots = listOf(
+                    8.5f to 8.5f,
+                    15.5f to 8.5f,
+                    12f to 12f,
+                    8.5f to 15.5f,
+                    15.5f to 15.5f,
+                )
+                for ((x, y) in dots) {
+                    moveTo(x + 1.2f, y)
+                    arcToRelative(1.2f, 1.2f, 0f, isMoreThanHalf = true, isPositiveArc = true, -2.4f, 0f)
+                    arcToRelative(1.2f, 1.2f, 0f, isMoreThanHalf = true, isPositiveArc = true, 2.4f, 0f)
+                    close()
+                }
+            }
+        }.build()
+    }
+
     /** List view icon (horizontal rows) for switching layout to list view. */
     val ListView: ImageVector by lazy {
         ImageVector.Builder(

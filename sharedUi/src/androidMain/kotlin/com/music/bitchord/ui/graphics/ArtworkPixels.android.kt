@@ -12,7 +12,15 @@ import coil3.toBitmap
 
 actual fun ImageRequest.Builder.forPixelAccess(): ImageRequest.Builder = allowHardware(false)
 
-actual fun Image.toImageBitmap(): ImageBitmap = toBitmap().asImageBitmap()
+actual fun Image.toImageBitmap(): ImageBitmap {
+    val bmp = toBitmap()
+    val softwareBmp = if (bmp.config == Bitmap.Config.HARDWARE) {
+        bmp.copy(Bitmap.Config.ARGB_8888, false) ?: bmp
+    } else {
+        bmp
+    }
+    return softwareBmp.asImageBitmap()
+}
 
 actual fun imageBitmapOf(pixels: IntArray, width: Int, height: Int): ImageBitmap =
     Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888).asImageBitmap()

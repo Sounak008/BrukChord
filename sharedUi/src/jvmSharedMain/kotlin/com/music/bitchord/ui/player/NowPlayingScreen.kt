@@ -13,6 +13,7 @@ import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.sharedui.resources.*
 
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -909,11 +910,9 @@ fun NowPlayingScreen(
     val canvasCover = remember(canvas?.url) { mutableFloatStateOf(0f) }
     // v1.5's backdrop, kept behind a switch — see [PlayerSettings.legacyMeshGradient].
     val legacyMesh by PlayerSettings.legacyMeshGradient.collectAsStateWithLifecycle()
-    // How often a playing clip's colours are re-read for the legacy mesh — see
-    // CanvasArtworkPlayer's refreshFrameEveryMs. Null otherwise: the blurred
-    // still cover under every other phone player has nothing to re-tint, and
-    // each read is a GPU readback.
-    val meshRefreshMs = MESH_REFRESH_MS.takeIf { legacyMesh }
+    // How often a playing clip's colours are re-read for the backdrop — see
+    // CanvasArtworkPlayer's refreshFrameEveryMs.
+    val meshRefreshMs = MESH_REFRESH_MS
 
     val scrub = rememberPlayerScrub(song.videoId, position, durationMs)
     // Read by the scrubber itself — see [PlayerScrubber.shown].
@@ -1680,27 +1679,35 @@ fun NowPlayingScreen(
     // Opening lyrics/queue, and rotating into or out of landscape, therefore
     // reuse the same tiny pre-blurred bitmap instead of running a screen-sized
     // effect.
-    val fullArtworkBlurImage = rememberFullArtworkBlurImage(
+    val fullArtworkBlurImage = rememberBottomEdgeBlur(
         imageUrl = remoteArt,
-        artPx = ART_PX,
+        canvasFrame = canvasFrame,
         // Straight away when it is the main player's backdrop too: the decode
         // and blur run off the main thread, and the last cover's blur is held
         // on screen until this one is ready.
         prepare = !legacyMesh || landscape || tabletArtworkBackdrop || lyricsOpen || queueOpen ||
             playerPrewarmStage >= 1,
     )
+    val bottomSolidColor = rememberBottomSolidColor(
+        imageUrl = remoteArt,
+        canvasFrame = canvasFrame,
+        defaultColor = FallbackBackdrop,
+    )
     // One movable Image node, not two backdrop call sites. Compose carries it
     // between the portrait and landscape players; only the cached bitmap
     // changes when the artwork preparation above completes for another song.
     val currentFullArtworkBlurImage = rememberUpdatedState(fullArtworkBlurImage)
+    val currentBottomSolidColor = rememberUpdatedState(bottomSolidColor)
     val fullArtworkBlurContent = remember {
         movableContentOf<Modifier> { backdropModifier ->
-            FullArtworkBlurBackdrop(
+            CurvedBottomEdgeBlurBackdrop(
                 image = currentFullArtworkBlurImage.value,
+                solidColor = currentBottomSolidColor.value,
                 modifier = backdropModifier,
             )
         }
     }
+    val sleeveBlurMaskState = remember { CurvedBlurMaskState() }
 
     // Docking into the mini player — see [PlayerDock]. Both shapes of the
     // player take part: the portrait sleeve morphs into the cover (see the
@@ -2354,9 +2361,8 @@ fun NowPlayingScreen(
                             onStillCaptured = onStillCaptured,
                             onResumed = onClipResumed,
                             onRenderedChanged = { canvasRendered = it },
-                            // Frames only for the legacy mesh, the one backdrop still
-                            // tinted off the clip.
-                            frameCapturePx = if (legacyMesh) CANVAS_FRAME_CAPTURE_PX else 0,
+                            // Frames for the backdrop re-tint off the clip.
+                            frameCapturePx = CANVAS_FRAME_CAPTURE_PX,
                             onFrameCaptured = {
                                 if (!clipFullscreen && !tabletArtworkBackdrop &&
                                     !lyricsOpen && !queueOpen && !queueDragging
@@ -3153,18 +3159,11 @@ fun NowPlayingScreen(
                                     drawContent()
                                     val shown = sleeveShown()
                                     if (shown > 0f) {
-                                        drawRect(
-                                            // Along smootherstep, not a straight ramp,
-                                            // so neither end of the dissolve shows as a line.
-                                            brush = Brush.verticalGradient(
-                                                colorStops = Array(FADE_CURVE_STOPS + 1) { i ->
-                                                    val t = i / FADE_CURVE_STOPS.toFloat()
-                                                    t to Color.Black.copy(alpha = 1f - shown * smootherStep(t))
-                                                },
-                                                startY = size.height * (1f - stillFadeFraction()),
-                                                endY = size.height,
-                                            ),
-                                            blendMode = BlendMode.DstIn,
+                                        drawCurvedArtworkMask(
+                                            maskState = sleeveBlurMaskState,
+                                            effectiveArtworkHeight = size.height,
+                                            coverage = CURVED_BLUR_COVERAGE,
+                                            alpha = shown,
                                         )
                                     }
                                 },
@@ -3310,7 +3309,7 @@ fun NowPlayingScreen(
                                         onStillCaptured = onStillCaptured,
                                         onResumed = onClipResumed,
                                         onRenderedChanged = { canvasRendered = it },
-                                        frameCapturePx = if (legacyMesh) CANVAS_FRAME_CAPTURE_PX else 0,
+                                        frameCapturePx = CANVAS_FRAME_CAPTURE_PX,
                                         onFrameCaptured = {
                                             if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) {
                                                 canvasFrame = it

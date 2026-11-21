@@ -186,8 +186,13 @@
     <string name="sign_in_for_personalised_playlists">Sign in to get personalised playlists</string>
     <string name="personal_mix">Personal Mix</string>
     <string name="personal_mix_subtitle">Dynamic endless playlist based on your recent listening</string>
+    <string name="replay_mix">Replay Mix</string>
+    <string name="replay_mix_subtitle">Your heavy rotation and most replayed tracks</string>
     <string name="moods_mix">Moods</string>
     <string name="moods_mix_subtitle">Personalized mix for every vibe</string>
+    <string name="lucky_dice">Feeling Lucky</string>
+    <string name="playing_random_taste">Playing %1$s from your taste</string>
+    <string name="no_taste_history_yet">No listening history yet</string>
 
     <string name="shelf_new_releases">New releases</string>
     <string name="shelf_quick_picks">Quick picks</string>

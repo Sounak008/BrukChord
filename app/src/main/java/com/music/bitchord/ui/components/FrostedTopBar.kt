@@ -6,6 +6,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -32,6 +33,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.material.icons.Icons
+import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.icons.SfIcons
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.HorizontalDivider
@@ -74,6 +76,8 @@ import kotlinx.coroutines.launch
 import com.music.bitchord.R
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.haptics.rememberHaptics
+import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.theme.stableStatusBarInsets
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
@@ -538,6 +542,51 @@ private fun artworkPageSurface(
         // also has its refractive highlight, but the navbar retains this edge
         // so these surfaces do as well.
         .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
+}
+
+/**
+ * Dice button at the right end of the top bar, beside the profile picture.
+ * Plays a random song drawn from the listener's personal taste.
+ */
+@Composable
+fun TopBarDiceButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    isLoading: Boolean = false,
+) {
+    val haptics = rememberHaptics()
+    val rotation = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+
+    IconButton(
+        onClick = {
+            haptics.play(Haptic.Select)
+            scope.launch {
+                rotation.animateTo(
+                    targetValue = rotation.value + 360f,
+                    animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing),
+                )
+            }
+            onClick()
+        },
+        enabled = !isLoading,
+        modifier = modifier.graphicsLayer { rotationZ = rotation.value },
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        } else {
+            Icon(
+                BitChordIcons.Dice,
+                contentDescription = stringResource(R.string.lucky_dice),
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+    }
 }
 
 /**

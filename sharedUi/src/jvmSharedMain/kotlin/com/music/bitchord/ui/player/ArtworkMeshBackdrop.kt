@@ -18,11 +18,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.LocalPlatformContext
@@ -44,6 +51,9 @@ import com.music.bitchord.data.model.artworkAt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlin.random.Random
@@ -79,6 +89,506 @@ import kotlin.random.Random
  */
 @Immutable
 class ArtworkMesh internal constructor(internal val image: ImageBitmap)
+
+/**
+ * Extracts and heavily blurs the bottom edge of an album art image.
+ *
+ * Like an edge bleed RGB LED strip for monitors, this samples the colours along
+ * the bottom edge of the sleeve (preserving their horizontal layout from left
+ * to right across [targetWidth] columns), lifts saturation for LED-strip vibrance,
+ * and box-blurs them into a diffuse gradient.
+ */
+fun extractBottomEdgeBlur(
+    source: ImageBitmap,
+    stripFraction: Float = 0.25f,
+    targetWidth: Int = 48,
+    targetHeight: Int = 16,
+    passes: Int = 3,
+): ImageBitmap {
+    val srcW = source.width
+    val srcH = source.height
+    if (srcW < 2 || srcH < 2) return source
+
+    val stripH = (srcH * stripFraction).roundToInt().coerceIn(1, srcH)
+    val startY = srcH - stripH
+
+    val stripPixels = IntArray(srcW * stripH)
+    source.readPixels(stripPixels, startX = 0, startY = startY, width = srcW, height = stripH)
+
+    val downsampled = IntArray(targetWidth * targetHeight)
+    val xRatio = srcW.toFloat() / targetWidth
+    val yRatio = stripH.toFloat() / targetHeight
+    for (ty in 0 until targetHeight) {
+        val sy = (ty * yRatio).toInt().coerceIn(0, stripH - 1)
+        val rowOffset = ty * targetWidth
+        val srcRowOffset = sy * srcW
+        for (tx in 0 until targetWidth) {
+            val sx = (tx * xRatio).toInt().coerceIn(0, source.width - 1)
+            downsampled[rowOffset + tx] = stripPixels[srcRowOffset + sx]
+        }
+    }
+
+    val hsl = FloatArray(3)
+    for (i in downsampled.indices) {
+        val pixel = downsampled[i]
+        ColorUtils.colorToHSL(pixel, hsl)
+        hsl[1] = (hsl[1] * 1.35f).coerceAtMost(1f)
+        hsl[2] = (hsl[2] * 1.15f).coerceIn(0.08f, 0.85f)
+        downsampled[i] = ColorUtils.HSLToColor(hsl)
+    }
+
+    val blurred = boxBlurPixels(downsampled, targetWidth, targetHeight, radius = 3, passes = passes)
+    return imageBitmapOf(blurred, targetWidth, targetHeight)
+}
+
+/** LRU cache of recently decoded bottom-edge blur bitmaps. */
+private val bottomBlurCache = object : LinkedHashMap<String, ImageBitmap>(0, 0.75f, true) {
+    override fun removeEldestEntry(eldest: Map.Entry<String, ImageBitmap>) = size > 16
+}
+
+/**
+ * Prepares the bottom-edge bleed blur bitmap for a cover or an active motion clip frame.
+ *
+ * Pre-blurs the artwork using multi-pass box blur on a background worker thread.
+ */
+@Composable
+fun rememberBottomEdgeBlur(
+    imageUrl: String?,
+    canvasFrame: ImageBitmap? = null,
+    prepare: Boolean = true,
+): ImageBitmap? {
+    val context = LocalPlatformContext.current
+    var blurImage by remember { mutableStateOf(imageUrl?.let(bottomBlurCache::get)) }
+
+    // Dynamic update when an animated motion clip provides a captured frame
+    LaunchedEffect(canvasFrame) {
+        if (canvasFrame != null) {
+            val blurred = withContext(Dispatchers.Default) {
+                canvasFrame.boxBlurred(FULL_BLUR_PASSES)
+            }
+            blurImage = blurred
+        }
+    }
+
+    // Static artwork lookup via Coil
+    LaunchedEffect(imageUrl, prepare) {
+        imageUrl?.let(bottomBlurCache::get)?.let {
+            if (canvasFrame == null) blurImage = it
+            return@LaunchedEffect
+        }
+        if (!prepare || imageUrl == null) return@LaunchedEffect
+        val request = ImageRequest.Builder(context)
+            .data(imageUrl.artworkAt(CARD_ART_PX) ?: imageUrl)
+            .size(FULL_BLUR_SOURCE_PX)
+            .forPixelAccess()
+            .build()
+        val result = SingletonImageLoader.get(context).execute(request)
+        val bitmap = (result as? SuccessResult)?.image?.toImageBitmap() ?: return@LaunchedEffect
+        val blurred = withContext(Dispatchers.Default) {
+            bitmap.boxBlurred(FULL_BLUR_PASSES)
+        }
+        bottomBlurCache[imageUrl] = blurred
+        if (canvasFrame == null) {
+            blurImage = blurred
+        }
+    }
+
+    return blurImage
+}
+
+/**
+ * Samples a solid background color from the very bottom edge of an album cover (or motion frame).
+ *
+ * Samples rows from 88% to 98% of the image (skipping the outermost 2% to avoid compression or
+ * letterbox borders), averages the RGB channels, and normalizes lightness so white text and
+ * controls have high contrast while preserving the artwork's genuine hue and tone.
+ */
+fun extractBottomSolidColor(source: ImageBitmap, stripFraction: Float = 0.03f): Color {
+    val srcW = source.width
+    val srcH = source.height
+    if (srcW < 1 || srcH < 1) return FallbackBackdrop
+
+    val allPixels = try {
+        source.argbPixels()
+    } catch (_: Throwable) {
+        return FallbackBackdrop
+    }
+    if (allPixels.isEmpty()) return FallbackBackdrop
+
+    val topY = (srcH * 0.88f).roundToInt().coerceIn(0, srcH - 1)
+    val botY = (srcH * 0.98f).roundToInt().coerceIn(topY + 1, srcH)
+
+    var rSum = 0L
+    var gSum = 0L
+    var bSum = 0L
+    var count = 0
+
+    var fbRSum = 0L
+    var fbGSum = 0L
+    var fbBSum = 0L
+    var fbCount = 0
+
+    for (y in topY until botY) {
+        val rowOffset = y * srcW
+        for (x in 0 until srcW) {
+            val pixel = allPixels[rowOffset + x]
+            val a = (pixel ushr 24) and 0xFF
+            if (a < 128) continue
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8) and 0xFF
+            val b = pixel and 0xFF
+
+            fbRSum += r
+            fbGSum += g
+            fbBSum += b
+            fbCount++
+
+            // Skip pure black letterbox or compression border pixels
+            if (r == 0 && g == 0 && b == 0) continue
+
+            rSum += r
+            gSum += g
+            bSum += b
+            count++
+        }
+    }
+
+    val finalCount = if (count > 0) count else fbCount
+    if (finalCount == 0) return FallbackBackdrop
+
+    val avgR = (if (count > 0) rSum / count else fbRSum / fbCount).toInt()
+    val avgG = (if (count > 0) gSum / count else fbGSum / fbCount).toInt()
+    val avgB = (if (count > 0) bSum / count else fbBSum / fbCount).toInt()
+
+    val hsl = FloatArray(3)
+    ColorUtils.RGBToHSL(avgR, avgG, avgB, hsl)
+    // Preserve true hue and saturation from the artwork.
+    // Gently cap lightness at 0.58f so white text/controls remain readable (Apple Music style).
+    // Floor lightness at 0.10f to prevent pitch black crush.
+    hsl[2] = hsl[2].coerceIn(0.10f, 0.58f)
+    return Color(ColorUtils.HSLToColor(hsl))
+}
+
+/** LRU cache of recently sampled bottom-edge solid colors. */
+private val bottomColorCache = object : LinkedHashMap<String, Color>(0, 0.75f, true) {
+    override fun removeEldestEntry(eldest: Map.Entry<String, Color>) = size > 24
+}
+
+/** LRU cache of recently generated curved blur mask bitmaps. */
+private val curvedMaskCache = object : LinkedHashMap<String, ImageBitmap>(0, 0.75f, true) {
+    override fun removeEldestEntry(eldest: Map.Entry<String, ImageBitmap>) = size > 8
+}
+
+const val MASK_W = 128
+const val MASK_H = 256
+const val CURVED_BLUR_COVERAGE = 0.63f
+
+/**
+ * Stateful builder that mirrors `rebuildCurvedMask` identically:
+ * - Skips rebuilding while dimensions, artwork height (< 0.5px), and coverage (< 0.005) stay within tolerance.
+ * - Produces an alpha-only mask (`0` above the curve -> smoothstep -> `255` below the curve)
+ *   stored as `(maskAlpha shl 24)` using the exact `0.54f` cosine dip and gentle `0.13f` / `0.85f` edge lift.
+ */
+class CurvedBlurMaskState {
+    private var cachedWidth: Int = -1
+    private var cachedHeight: Int = -1
+    private var cachedArtworkHeight: Float = Float.NaN
+    private var cachedCoverage: Float = Float.NaN
+    private val maskPixels = IntArray(MASK_W * MASK_H)
+    private var cachedMask: ImageBitmap? = null
+
+    fun rebuild(
+        width: Int,
+        height: Int,
+        effectiveArtworkHeight: Float,
+        coverage: Float = CURVED_BLUR_COVERAGE,
+    ): ImageBitmap? {
+        if (
+            abs(effectiveArtworkHeight - cachedArtworkHeight) < 0.5f &&
+            abs(coverage - cachedCoverage) < 0.005f &&
+            width == cachedWidth &&
+            height == cachedHeight &&
+            cachedMask != null
+        ) {
+            return cachedMask
+        }
+
+        cachedArtworkHeight = effectiveArtworkHeight
+        cachedCoverage = coverage
+        cachedWidth = width
+        cachedHeight = height
+
+        if (effectiveArtworkHeight <= 1.0f || width <= 0 || height <= 0) {
+            cachedMask = null
+            return null
+        }
+
+        val edgeLiftPx = effectiveArtworkHeight * 0.13f
+        val fadeStartPx = effectiveArtworkHeight * coverage + 10.0f
+        val fadeEndPx = minOf(height.toFloat(), effectiveArtworkHeight * 1.01f + 10.0f)
+
+        for (col in 0 until MASK_W) {
+            val normX = col.toFloat() / (MASK_W - 1).toFloat()
+            val curveU = ((normX - 0.54f) / 0.54f).coerceIn(-1.0f, 1.0f)
+            val curveDip = 0.5f * (1.0f + cos(PI * curveU).toFloat())
+
+            val columnStartY = maxOf(0.0f, fadeStartPx - edgeLiftPx * (1.0f - curveDip))
+            val columnEndY = maxOf(
+                columnStartY + 8.0f,
+                fadeEndPx - edgeLiftPx * 0.85f * (1.0f - curveDip),
+            )
+            val invBandSpan = 1.0f / (columnEndY - columnStartY)
+
+            for (row in 0 until MASK_H) {
+                val sampleY = (row.toFloat() / (MASK_H - 1).toFloat()) * height.toFloat()
+                val maskAlpha = when {
+                    sampleY <= columnStartY -> 0
+                    sampleY >= columnEndY -> 255
+                    else -> {
+                        val progress = (sampleY - columnStartY) * invBandSpan
+                        val smooth = progress * progress * (3.0f - 2.0f * progress)
+                        (smooth * 255.0f).roundToInt().coerceIn(0, 255)
+                    }
+                }
+                maskPixels[row * MASK_W + col] = maskAlpha shl 24
+            }
+        }
+
+        val bitmap = imageBitmapOf(maskPixels, MASK_W, MASK_H)
+        cachedMask = bitmap
+        return bitmap
+    }
+}
+
+/**
+ * Applies the exact curved blur falloff to a sharp artwork layer (inside an offscreen compositing
+ * layer) using `BlendMode.DstOut`, erasing the lower edge along the curve so the blurred backdrop
+ * underneath shows through identically to `rebuildCurvedMask`.
+ */
+fun DrawScope.drawCurvedArtworkMask(
+    maskState: CurvedBlurMaskState,
+    effectiveArtworkHeight: Float = size.height,
+    coverage: Float = CURVED_BLUR_COVERAGE,
+    alpha: Float = 1f,
+) {
+    if (alpha <= 0f) return
+    val drawWidth = size.width.roundToInt()
+    val drawHeight = size.height.roundToInt()
+    if (drawWidth <= 0 || drawHeight <= 0) return
+
+    val maskBitmap = maskState.rebuild(
+        width = drawWidth,
+        height = drawHeight,
+        effectiveArtworkHeight = effectiveArtworkHeight,
+        coverage = coverage,
+    ) ?: return
+
+    drawImage(
+        image = maskBitmap,
+        srcOffset = IntOffset.Zero,
+        srcSize = IntSize(maskBitmap.width, maskBitmap.height),
+        dstOffset = IntOffset.Zero,
+        dstSize = IntSize(drawWidth, drawHeight),
+        alpha = alpha.coerceIn(0f, 1f),
+        filterQuality = FilterQuality.Medium,
+        blendMode = BlendMode.DstOut,
+    )
+}
+
+fun buildCurvedMaskBitmap(
+    w: Int,
+    h: Int,
+    effectiveArtH: Float,
+    coverage: Float = CURVED_BLUR_COVERAGE,
+    invert: Boolean = false,
+): ImageBitmap {
+    val key = "$w|$h|${(effectiveArtH * 2).roundToInt()}|${(coverage * 200).roundToInt()}|$invert"
+    curvedMaskCache[key]?.let { return it }
+
+    val safeHeight = h.coerceAtLeast(1)
+    val safeArtHeight = effectiveArtH.coerceAtLeast(1.0f)
+    val edgeLiftPx = safeArtHeight * 0.13f
+    val fadeStartPx = safeArtHeight * coverage + 10.0f
+    val fadeEndPx = minOf(safeHeight.toFloat(), safeArtHeight * 1.01f + 10.0f)
+
+    val pixels = IntArray(MASK_W * MASK_H)
+
+    for (col in 0 until MASK_W) {
+        val normX = col.toFloat() / (MASK_W - 1).toFloat()
+        val curveU = ((normX - 0.54f) / 0.54f).coerceIn(-1.0f, 1.0f)
+        val curveDip = 0.5f * (1.0f + cos(PI * curveU).toFloat())
+
+        val columnStartY = maxOf(0.0f, fadeStartPx - edgeLiftPx * (1.0f - curveDip))
+        val columnEndY = maxOf(
+            columnStartY + 8.0f,
+            fadeEndPx - edgeLiftPx * 0.85f * (1.0f - curveDip),
+        )
+        val invBandSpan = 1.0f / (columnEndY - columnStartY)
+
+        for (row in 0 until MASK_H) {
+            val sampleY = (row.toFloat() / (MASK_H - 1).toFloat()) * safeHeight.toFloat()
+            val maskAlpha = when {
+                sampleY <= columnStartY -> 0
+                sampleY >= columnEndY -> 255
+                else -> {
+                    val progress = (sampleY - columnStartY) * invBandSpan
+                    val smooth = progress * progress * (3.0f - 2.0f * progress)
+                    (smooth * 255.0f).roundToInt().coerceIn(0, 255)
+                }
+            }
+            val finalAlpha = if (invert) 255 - maskAlpha else maskAlpha
+            pixels[row * MASK_W + col] = finalAlpha shl 24
+        }
+    }
+
+    val result = imageBitmapOf(pixels, MASK_W, MASK_H)
+    curvedMaskCache[key] = result
+    return result
+}
+
+fun getCurvedBlurMask(
+    targetWidth: Int = MASK_W,
+    targetHeight: Int = MASK_H,
+    sideYFraction: Float = 0.50f,
+    centerYFraction: Float = 0.57f,
+    blurRadius: Int = 16,
+    passes: Int = 4,
+): ImageBitmap {
+    val safeHeight = targetHeight.coerceAtLeast(1)
+    val effectiveArtworkHeight = (safeHeight * centerYFraction / 1.01f).coerceAtLeast(1f)
+    val coverage = (sideYFraction / centerYFraction).coerceIn(0.40f, 0.90f)
+    return buildCurvedMaskBitmap(
+        w = targetWidth,
+        h = targetHeight,
+        effectiveArtH = effectiveArtworkHeight,
+        coverage = coverage,
+        invert = false,
+    )
+}
+
+fun getCurvedBlurMask(
+    w: Int,
+    h: Int,
+    effectiveArtH: Float,
+    coverage: Float = CURVED_BLUR_COVERAGE,
+    invert: Boolean = false,
+): ImageBitmap = buildCurvedMaskBitmap(
+    w = w,
+    h = h,
+    effectiveArtH = effectiveArtH,
+    coverage = coverage,
+    invert = invert,
+)
+
+/**
+ * Prepares the solid background color picked up from the very bottom edge of the album.
+ *
+ * Keeps the first pulled color; does not change colors on subsequent motion frames.
+ */
+@Composable
+fun rememberBottomSolidColor(
+    imageUrl: String?,
+    canvasFrame: ImageBitmap? = null,
+    defaultColor: Color = FallbackBackdrop,
+): Color {
+    val context = LocalPlatformContext.current
+    var color by remember(imageUrl) { mutableStateOf(imageUrl?.let(bottomColorCache::get) ?: defaultColor) }
+    var colorLocked by remember(imageUrl) { mutableStateOf(imageUrl != null && bottomColorCache.containsKey(imageUrl)) }
+
+    // Keep the first pulled color; do not change colors as animated arts play
+    LaunchedEffect(canvasFrame) {
+        if (canvasFrame != null && !colorLocked) {
+            val extracted = withContext(Dispatchers.Default) {
+                extractBottomSolidColor(canvasFrame)
+            }
+            if (extracted != FallbackBackdrop) {
+                color = extracted
+                colorLocked = true
+                if (imageUrl != null) {
+                    bottomColorCache[imageUrl] = extracted
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(imageUrl) {
+        if (imageUrl == null || colorLocked) return@LaunchedEffect
+        val cached = bottomColorCache[imageUrl]
+        if (cached != null) {
+            color = cached
+            colorLocked = true
+            return@LaunchedEffect
+        }
+        val request = ImageRequest.Builder(context)
+            .data(imageUrl.artworkAt(CARD_ART_PX) ?: imageUrl)
+            .size(FULL_BLUR_SOURCE_PX)
+            .forPixelAccess()
+            .build()
+        val result = SingletonImageLoader.get(context).execute(request)
+        val bitmap = (result as? SuccessResult)?.image?.toImageBitmap() ?: return@LaunchedEffect
+        val extracted = withContext(Dispatchers.Default) {
+            extractBottomSolidColor(bitmap)
+        }
+        if (extracted != FallbackBackdrop) {
+            bottomColorCache[imageUrl] = extracted
+            if (!colorLocked) {
+                color = extracted
+                colorLocked = true
+            }
+        }
+    }
+
+    return color
+}
+
+/**
+ * Backdrop with Apple Music-style slight curved arc blur:
+ *
+ * 1. Background: Clean solid color picked up from the lowest edge of the album.
+ *    No mirrored images behind, no partitions, no vertical lines.
+ * 2. Along the slight curve: The artwork blurs out and slowly transitions into the solid color.
+ * 3. Below the curve: The clean solid color extends seamlessly behind the controls.
+ */
+@Composable
+fun CurvedBottomEdgeBlurBackdrop(
+    image: ImageBitmap?,
+    solidColor: Color = FallbackBackdrop,
+    modifier: Modifier = Modifier,
+    sideYFraction: Float = 0.50f,
+    centerYFraction: Float = 0.57f,
+    blurRadius: Int = 16,
+    effectiveArtH: Float = 0f,
+    coverage: Float = CURVED_BLUR_COVERAGE,
+) {
+    Box(modifier = modifier.fillMaxSize().background(solidColor)) {
+        if (image != null) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val drawWidth = size.width.roundToInt()
+                val drawHeight = size.height.roundToInt()
+                if (drawWidth <= 0 || drawHeight <= 0) return@Canvas
+
+                drawImage(
+                    image = image,
+                    srcOffset = IntOffset.Zero,
+                    srcSize = IntSize(image.width, image.height),
+                    dstOffset = IntOffset.Zero,
+                    dstSize = IntSize(drawWidth, drawHeight),
+                    filterQuality = FilterQuality.Medium,
+                )
+
+                // Subtle downward readability scrim so white controls and track titles
+                // stay legible over bright covers without darkening the sharp artwork above.
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        0.0f to Color.Black.copy(alpha = 0.10f),
+                        0.55f to Color.Black.copy(alpha = 0.24f),
+                        1.0f to Color.Black.copy(alpha = 0.42f),
+                    ),
+                )
+            }
+        }
+    }
+}
 
 /**
  * One pre-blurred bitmap for the full-cover player backdrop.
@@ -128,44 +638,20 @@ fun rememberFullArtworkBlurImage(
 
 /**
  * The phone and tablet player's backdrop — main player, lyrics and queue alike,
- * unless the legacy mesh is switched on: one copy of the cover cropped across
- * the complete bounds and blurred in place, with the artwork above feathering
- * its own bottom edge into it.
- *
- * The blur is baked into [image] (see [rememberFullArtworkBlurImage]), so this
- * is a plain image draw: nothing here re-blurs while the player moves or a
- * clip plays over it. A new cover crossfades in over the last one.
- *
- * It looks the same in all three states and reads nothing that moves, so moving
- * between them never redraws it: only what sits on top of it changes.
+ * with Apple Music-style stretched-out U curved edge bleed blur.
  */
 @Composable
 fun FullArtworkBlurBackdrop(
     image: ImageBitmap?,
     modifier: Modifier = Modifier,
+    solidColor: Color = FallbackBackdrop,
 ) {
-    Box(modifier = modifier.fillMaxSize().background(FallbackBackdrop)) {
-        Crossfade(
-            targetState = image,
-            animationSpec = tween(320, easing = FastOutSlowInEasing),
-            label = "preparedBackdropImage",
-        ) { bitmap ->
-            if (bitmap != null) {
-                val painter = remember(bitmap) { BitmapPainter(bitmap) }
-                Image(
-                    painter = painter,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        }
-
-        // Everything on this is white: the lyrics, the queue and the main
-        // player's controls. Preserve the cover's colour and layout, but keep
-        // bright sleeves from lowering contrast.
-        Canvas(Modifier.fillMaxSize()) { drawRect(brush = FullArtworkScrim) }
-    }
+    CurvedBottomEdgeBlurBackdrop(
+        image = image,
+        solidColor = solidColor,
+        coverage = CURVED_BLUR_COVERAGE,
+        modifier = modifier,
+    )
 }
 
 /**
@@ -425,38 +911,57 @@ private fun DrawScope.drawMesh(mesh: ArtworkMesh, seamY: Float, alpha: Float) {
 }
 
 /** The shade over the blurred cover, deepening toward the controls at the foot. */
-private val FullArtworkScrim = Brush.verticalGradient(
+internal val FullArtworkScrim = Brush.verticalGradient(
     0f to Color.Black.copy(alpha = 0.34f),
     0.55f to Color.Black.copy(alpha = 0.48f),
     1f to Color.Black.copy(alpha = 0.64f),
 )
 
 /** Drawn only until an artwork has been read — never a colour anyone chose. */
-private val FallbackBackdrop = Color(0xFF121212)
+internal val FallbackBackdrop = Color(0xFF121212)
 
 /** A screen cannot recover detail discarded here; small is the performance feature. */
-private const val FULL_BLUR_SOURCE_PX = 128
-private const val FULL_BLUR_PASSES = 3
+private const val FULL_BLUR_SOURCE_PX = 96
+private const val FULL_BLUR_PASSES = 4
 
 /** A handful of recent covers; each entry is only 64 KiB at 128x128 ARGB. */
 private val fullBlurCache = object : LinkedHashMap<String, ImageBitmap>(0, 0.75f, true) {
     override fun removeEldestEntry(eldest: Map.Entry<String, ImageBitmap>) = size > 8
 }
 
-/** Three small box passes approximate a broad Gaussian blur at thumbnail scale. */
-private fun ImageBitmap.boxBlurred(passes: Int): ImageBitmap {
+/** Heavy multi-pass box blur for creamy, atmospheric, gradual backdrop falloff. */
+private fun ImageBitmap.boxBlurred(passes: Int = FULL_BLUR_PASSES): ImageBitmap {
     val width = width
     val height = height
     if (width < 2 || height < 2) return this
-    var source = argbPixels()
-    var target = IntArray(source.size)
-    val radius = (minOf(width, height) / 12).coerceAtLeast(2)
+    val source = argbPixels()
+    if (source.isEmpty()) return this
+    val target = IntArray(source.size)
+    val radius = (minOf(width, height) / 5).coerceAtLeast(8)
 
+    var src = source
+    var dst = target
     repeat(passes) {
-        boxBlurPass(source, target, width, height, radius, horizontal = true)
-        boxBlurPass(target, source, width, height, radius, horizontal = false)
+        boxBlurPass(src, dst, width, height, radius, horizontal = true)
+        boxBlurPass(dst, src, width, height, radius, horizontal = false)
     }
-    return imageBitmapOf(source, width, height)
+    return imageBitmapOf(src, width, height)
+}
+
+private fun boxBlurPixels(
+    source: IntArray,
+    width: Int,
+    height: Int,
+    radius: Int,
+    passes: Int,
+): IntArray {
+    var src = source
+    var dst = IntArray(src.size)
+    repeat(passes) {
+        boxBlurPass(src, dst, width, height, radius, horizontal = true)
+        boxBlurPass(dst, src, width, height, radius, horizontal = false)
+    }
+    return src
 }
 
 private fun boxBlurPass(
@@ -471,6 +976,7 @@ private fun boxBlurPass(
     val minor = if (horizontal) height else width
     val window = radius * 2 + 1
     repeat(minor) { fixed ->
+        var alpha = 0
         var red = 0
         var green = 0
         var blue = 0
@@ -481,17 +987,23 @@ private fun boxBlurPass(
         }
         for (offset in -radius..radius) {
             val color = pixel(offset)
-            red += color shr 16 and 0xFF
-            green += color shr 8 and 0xFF
+            alpha += (color ushr 24) and 0xFF
+            red += (color shr 16) and 0xFF
+            green += (color shr 8) and 0xFF
             blue += color and 0xFF
         }
         repeat(major) { moving ->
             val index = if (horizontal) fixed * width + moving else moving * width + fixed
-            target[index] = argb(red / window, green / window, blue / window)
+            val a = (alpha / window).coerceIn(0, 255)
+            val r = (red / window).coerceIn(0, 255)
+            val g = (green / window).coerceIn(0, 255)
+            val b = (blue / window).coerceIn(0, 255)
+            target[index] = (a shl 24) or (r shl 16) or (g shl 8) or b
             val leaving = pixel(moving - radius)
             val entering = pixel(moving + radius + 1)
-            red += (entering shr 16 and 0xFF) - (leaving shr 16 and 0xFF)
-            green += (entering shr 8 and 0xFF) - (leaving shr 8 and 0xFF)
+            alpha += ((entering ushr 24) and 0xFF) - ((leaving ushr 24) and 0xFF)
+            red += ((entering shr 16) and 0xFF) - ((leaving shr 16) and 0xFF)
+            green += ((entering shr 8) and 0xFF) - ((leaving shr 8) and 0xFF)
             blue += (entering and 0xFF) - (leaving and 0xFF)
         }
     }

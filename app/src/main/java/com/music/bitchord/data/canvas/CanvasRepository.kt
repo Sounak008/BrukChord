@@ -143,14 +143,14 @@ object CanvasRepository {
                     { AppleMusicCanvas.searchAlbum(name, credit) },
                     { TidalCanvas.searchAlbum(name, credit) },
                     { CommunityCanvas.searchAlbum(name, credit) },
-                ) { it.matches(name, credit, name) }
+                ) { it.matchesAlbum(name, credit) }
             } else {
                 firstHit(
                     { AppleMusicCanvas.searchAlbum(name, credit) },
                     { TidalCanvas.searchAlbum(name, credit) },
                     { CommunityCanvas.searchAlbum(name, credit) },
                     { SpotifyCanvas.searchAlbum(name, credit) },
-                ) { it.matches(name, credit, name) }
+                ) { it.matchesAlbum(name, credit) }
             }
         }
     }
