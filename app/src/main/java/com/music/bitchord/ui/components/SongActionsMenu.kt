@@ -67,6 +67,7 @@ import com.music.bitchord.data.webdav.WebDavUploads
 import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.SleepTimer
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.theme.ArtworkPalette
 import kotlinx.coroutines.delay
@@ -172,6 +173,11 @@ fun SongActionsMenu(
     /** Opens the timing control offered only by the main player's menu. */
     onLyricsOffset: (() -> Unit)? = null,
     /**
+     * Opens the Automix mix popup on the next transition. Null hides the row —
+     * the player passes one only while Automix is on.
+     */
+    onAutomixOverview: (() -> Unit)? = null,
+    /**
      * True while a lookup for this track's album/artist ids is still in
      * flight, so it isn't yet known whether "Open album" and "Open artist"
      * belong on this menu at all. Only the player ever opens a menu before
@@ -179,6 +185,8 @@ fun SongActionsMenu(
      * as before — present when the id is there, absent when it never was.
      */
     resolvingLinks: Boolean = false,
+    /** Queue rows already belong to the queue, so hide its insertion actions. */
+    fromQueue: Boolean = false,
 ) {
     var showingSongInfo by remember(song.videoId) { mutableStateOf(false) }
     var pickingSleepTimer by remember { mutableStateOf(false) }
@@ -280,14 +288,18 @@ fun SongActionsMenu(
         // player's own pair: a heart that files the track under this device's
         // Liked playlist, and the device's playlists. [likeStatus] is that
         // playlist's answer there, not YouTube's, and neither needs an account.
-        if (canRate) {
+        // Remove stands without an account too: a playlist imported onto
+        // this device is the user's to edit while signed out.
+        if (canRate || onRemoveFromPlaylist != null) {
             if (startsGroup()) IosMenuSeparator()
-            ActionRow(
-                icon = SfIcons.AddToPlaylist,
-                label = stringResource(R.string.add_to_playlist),
-                accent = palette.accent,
-                onClick = onAddToPlaylist,
-            )
+            if (canRate) {
+                ActionRow(
+                    icon = SfIcons.AddToPlaylist,
+                    label = stringResource(R.string.add_to_playlist),
+                    accent = palette.accent,
+                    onClick = onAddToPlaylist,
+                )
+            }
             onRemoveFromPlaylist?.let {
                 ActionRow(
                     icon = SfIcons.RemoveFromPlaylist,
@@ -308,18 +320,20 @@ fun SongActionsMenu(
             accent = palette.accent,
             onClick = onStartRadio,
         )
-        ActionRow(
-            icon = SfIcons.PlayNext,
-            label = stringResource(R.string.play_next),
-            accent = palette.accent,
-            onClick = onPlayNext,
-        )
-        ActionRow(
-            icon = SfIcons.PlayLast,
-            label = stringResource(R.string.add_to_queue),
-            accent = palette.accent,
-            onClick = onAddToQueue,
-        )
+        if (!fromQueue) {
+            ActionRow(
+                icon = SfIcons.PlayNext,
+                label = stringResource(R.string.play_next),
+                accent = palette.accent,
+                onClick = onPlayNext,
+            )
+            ActionRow(
+                icon = SfIcons.PlayLast,
+                label = stringResource(R.string.add_to_queue),
+                accent = palette.accent,
+                onClick = onAddToQueue,
+            )
+        }
         DownloadRow(song, palette, isOffline, onDownload)
         onRemoveFromCache?.let {
             ActionRow(
@@ -369,7 +383,7 @@ fun SongActionsMenu(
 
         // The player's own: about the track playing right now rather than
         // about the song as a thing in a library.
-        if (showSleepTimer || onLyricsOffset != null || onCopyLog != null) {
+        if (showSleepTimer || onLyricsOffset != null || onAutomixOverview != null || onCopyLog != null) {
             if (startsGroup()) IosMenuSeparator()
             if (showSleepTimer) {
                 ActionRow(
@@ -378,6 +392,16 @@ fun SongActionsMenu(
                     value = sleepTimerStatus(),
                     accent = palette.accent,
                 ) { pickingSleepTimer = true }
+            }
+            // The same popup "Mixing" opens mid-blend, on the transition
+            // still to come.
+            onAutomixOverview?.let {
+                ActionRow(
+                    icon = SfIcons.GraphicEq,
+                    label = stringResource(R.string.automix_overview),
+                    accent = palette.accent,
+                    onClick = it,
+                )
             }
             // Local files and completed downloads use the same player lyric
             // clock (including embedded synced lyrics), so they need this
@@ -642,6 +666,16 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
             selected = custom != null,
             accent = palette.accent,
         ) { pickingCustom = true }
+
+        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
+        val fadeOut by AppSettings.sleepTimerFadeOut.collectAsStateWithLifecycle()
+        IosMenuRow(
+            label = stringResource(R.string.sleep_timer_fade_out),
+            icon = if (fadeOut) SfIcons.Check else null,
+            onClick = { AppSettings.setSleepTimerFadeOut(!fadeOut) },
+            iconTint = palette.accent,
+        )
+
         if (chosen != null || afterTrack) {
             ActionRow(SfIcons.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
                 SleepTimer.cancel()
@@ -708,6 +742,7 @@ private fun CustomSleepTimerPage(
 ) {
     var minutes by remember { mutableIntStateOf(initialMinutes) }
     val foreground = MaterialTheme.colorScheme.onBackground
+    val readout = iosMenuColors().label
 
     Column(Modifier.fillMaxWidth()) {
         SleepTimerHeader(
@@ -720,7 +755,7 @@ private fun CustomSleepTimerPage(
         Text(
             text = sleepDuration(minutes),
             style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = foreground,
+            color = readout,
             textAlign = TextAlign.Center,
             modifier = Modifier
                 .fillMaxWidth()
@@ -776,7 +811,7 @@ private fun StepButton(
         Text(
             text = label,
             style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = if (enabled) 0.85f else 0.25f),
+            color = if (enabled) iosMenuColors().label else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.25f),
         )
     }
 }
@@ -920,6 +955,8 @@ private fun LoadingActionRow(icon: ImageVector, label: String, palette: ArtworkP
  * The track the playlist picker is adding, drawn at its head — the same track
  * the menu it was opened from was about.
  *
+ * [title] is set when that track's artwork and artist preview an album instead.
+ *
  * [subtitleColor] is for ground other than the flat theme background, where
  * the usual dim grey may not hold.
  */
@@ -928,6 +965,7 @@ internal fun SheetTrackHeader(
     song: Song,
     modifier: Modifier = Modifier,
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    title: String? = null,
 ) {
     Row(
         modifier = modifier
@@ -947,11 +985,21 @@ internal fun SheetTrackHeader(
         )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            ExplicitSongTitle(
-                song = song,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
+            if (title == null) {
+                ExplicitSongTitle(
+                    song = song,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+            } else {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Text(
                 text = song.artist,
                 style = MaterialTheme.typography.bodyMedium,

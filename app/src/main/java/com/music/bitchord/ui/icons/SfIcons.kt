@@ -49,7 +49,9 @@ import com.composables.sfsymbols.monochrome.SFHeart
 import com.composables.sfsymbols.monochrome.SFHeartFill
 import com.composables.sfsymbols.monochrome.SFHifispeaker
 import com.composables.sfsymbols.monochrome.SFIcloud
+import com.composables.sfsymbols.monochrome.SFIcloudAndArrowUp
 import com.composables.sfsymbols.monochrome.SFIcloudSlash
+import com.composables.sfsymbols.monochrome.SFIphone
 import com.composables.sfsymbols.monochrome.SFInfoCircle
 import com.composables.sfsymbols.monochrome.SFInternaldrive
 import com.composables.sfsymbols.monochrome.SFKey
@@ -128,7 +130,6 @@ object SfIcons {
     // ---- Settings ----
     val AccountPlaceholder: ImageVector by lazy { bold(SfSymbols.Monochrome.SFPersonCropCircleFill) }
     val Add: ImageVector by lazy { bold(SfSymbols.Monochrome.SFPlus) }
-    val AddAccount: ImageVector by lazy { bold(SfSymbols.Monochrome.SFPersonCropCircleBadgePlus) }
     val Advanced: ImageVector by lazy { bold(SfSymbols.Monochrome.SFWrenchAndScrewdriver) }
     val Animation: ImageVector by lazy { bold(SfSymbols.Monochrome.SFFigureWalkMotion) }
     val Appearance: ImageVector by lazy { bold(SfSymbols.Monochrome.SFPaintbrushPointed) }
@@ -145,6 +146,8 @@ object SfIcons {
     val ChevronRight: ImageVector by lazy { bold(SfSymbols.Monochrome.SFChevronRight) }
     val Clock: ImageVector by lazy { bold(SfSymbols.Monochrome.SFClock) }
     val Cloud: ImageVector by lazy { bold(SfSymbols.Monochrome.SFIcloud) }
+    val CloudUpload: ImageVector by lazy { bold(SfSymbols.Monochrome.SFIcloudAndArrowUp) }
+    val Phone: ImageVector by lazy { bold(SfSymbols.Monochrome.SFIphone) }
     val CloudDone: ImageVector by lazy { bold(SfSymbols.Monochrome.SFCheckmarkIcloud) }
     val CloudOff: ImageVector by lazy { bold(SfSymbols.Monochrome.SFIcloudSlash) }
     val ContentCopy: ImageVector by lazy { bold(SfSymbols.Monochrome.SFDocumentOnDocument) }
@@ -175,7 +178,6 @@ object SfIcons {
     val Lock: ImageVector by lazy { bold(SfSymbols.Monochrome.SFLock) }
     val Login: ImageVector by lazy { bold(SfSymbols.Monochrome.SFArrowRightCircle) }
     val Logout: ImageVector by lazy { bold(SfSymbols.Monochrome.SFRectanglePortraitAndArrowRight) }
-    val ManageAccounts: ImageVector by lazy { bold(SfSymbols.Monochrome.SFPerson2BadgeGearshape) }
     val Miscellaneous: ImageVector by lazy { bold(SfSymbols.Monochrome.SFEllipsisCircle) }
     val MotionPhotosOff: ImageVector by lazy { bold(SfSymbols.Monochrome.SFLivephotoSlash) }
     val MusicNote: ImageVector by lazy { bold(SfSymbols.Monochrome.SFMusicNote) }

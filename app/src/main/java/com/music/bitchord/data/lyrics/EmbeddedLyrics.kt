@@ -95,6 +95,25 @@ object EmbeddedLyrics {
         }
 
     /**
+     * [raw] as lines: LRC where it is stamped, else the words as plain,
+     * unsynced lines — which is how most taggers store lyrics, and what an
+     * MP3's `USLT` usually holds (#1020). Null when there is nothing to show.
+     */
+    internal fun linesOf(raw: String): List<LyricLine>? {
+        val parsed = parse(raw)
+        if (parsed != null) return parsed
+        return raw.lineSequence().map { it.trim() }
+            .filter { it.isNotEmpty() && !LRC_ID_TAG.matches(it) }
+            .map { LyricLine(0L, it) }.toList().ifEmpty { null }
+    }
+
+    /**
+     * Whether [lines] carry timing. Only timed lyrics from the file end the
+     * lookup; plain ones are a fallback a network source may still beat with
+     * synced lines, as every MP3 got before its `USLT` was read.
+     */
+    fun isSynced(lines: List<LyricLine>): Boolean = lines.any { it.timeMs > 0L }
+    /**
      * Parses the raw lyric string in any supported format (TTML, Karaoke LRC,
      * Enhanced LRC, Standard LRC, SRT, WebVTT, or plain text).
      */
@@ -299,6 +318,7 @@ object EmbeddedLyrics {
             head.startsWith(FLAC_MAGIC) -> flac(head)
             head.startsWith(MATROSKA_MAGIC) -> matroska(head)
             head.isMp4() -> mp4(head)
+            head.startsWith(ID3_MAGIC) -> id3(head, 0)
             else -> null
         }
         return found?.takeIf { it.isNotBlank() }
@@ -886,6 +906,8 @@ object EmbeddedLyrics {
     private val RIFF_MAGIC = "RIFF".toByteArray(Charsets.US_ASCII)
     private val VORBIS_COMMENT_MAGIC = byteArrayOf(0x03) + "vorbis".toByteArray(Charsets.US_ASCII)
     private val OPUS_TAGS_MAGIC = "OpusTags".toByteArray(Charsets.US_ASCII)
+    private val ID3_MAGIC = "ID3".toByteArray(Charsets.US_ASCII)
+    private val LRC_ID_TAG = Regex("""\[[A-Za-z#]+:[^\]]*]""")
     private val MATROSKA_MAGIC = byteArrayOf(0x1A, 0x45, 0xDF.toByte(), 0xA3.toByte())
     private val DATA_ATOM = "data".toByteArray(Charsets.ISO_8859_1)
     private val LYR_ATOM = byteArrayOf(0xA9.toByte()) + "lyr".toByteArray(Charsets.ISO_8859_1)

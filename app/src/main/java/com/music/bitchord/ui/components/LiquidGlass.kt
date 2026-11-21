@@ -83,6 +83,15 @@ private const val SURFACE_OPACITY = 0.4f
 private const val GLASS_RESOLUTION_SCALE = 0.33f
 
 /**
+ * The blur and resolution under [AppSettings.glassPerformance]. With no lens to
+ * bend what is behind it, the frost alone has to break up a page's text, so it
+ * is twice the radius — and that wider blur hides a smaller recording, which
+ * takes the surface from about 11% of its pixels to about 6%.
+ */
+private const val FROST_BLUR_RADIUS_DP = 16f
+private const val FROST_RESOLUTION_SCALE = 0.25f
+
+/**
  * The hairline along a bar's edge, and what stands in for the glass rim
  * wherever the glass itself is not drawn.
  *
@@ -199,6 +208,10 @@ fun Modifier.liquidGlassRim(shape: CornerBasedShape): Modifier {
  * than at each call site so there is one answer to it: [MainActivity] also stops
  * recording the backdrop layer when it is on, and a surface that still tried to
  * sample would be sampling a layer nothing is drawing into.
+ *
+ * Under [AppSettings.glassPerformance] the lens goes and the blur frosts instead,
+ * for phones that can't spare the refraction shader. The vibrancy, tint, rim and
+ * shadow are the same either way.
  *
  * [shape] is restricted to [CornerBasedShape] because the backdrop's lens effect
  * throws for any other shape type.

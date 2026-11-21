@@ -96,7 +96,9 @@ import com.music.bitchord.ui.components.IosSwitch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -163,12 +165,14 @@ import com.music.bitchord.data.settings.BitPerfectMode
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.audio.bitperfect.BitPerfectOutput
 import com.music.bitchord.data.settings.AutomixPerformanceMode
+import com.music.bitchord.playback.smart.AutomixModels
 import com.music.bitchord.R
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.settings.AppFont
+import com.music.bitchord.data.settings.PlayerTheme
 import com.music.bitchord.data.stats.Backup
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.ui.player.fullBleedArtworkAvailable
@@ -195,6 +199,8 @@ fun SettingsScreen(
     onAccountScrobbling: () -> Unit,
     onEqualizer: () -> Unit,
     onOpenReplay: () -> Unit,
+    /** Opens [DriveBackupScreen], under Backup and Restore. */
+    onDriveBackup: () -> Unit,
     onLyricsSources: () -> Unit,
     onTranslationLanguage: () -> Unit,
     onSources: () -> Unit,
@@ -230,8 +236,10 @@ fun SettingsScreen(
     val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
+    val automixModels by AutomixModels.state.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
+    val sleepTimerFadeOut by AppSettings.sleepTimerFadeOut.collectAsStateWithLifecycle()
     val dolbyAtmos by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
     val directSourceStream by AppSettings.directSourceStream.collectAsStateWithLifecycle()
     // A property of the hardware, so it is read once rather than remembered
@@ -243,6 +251,7 @@ fun SettingsScreen(
     val listenTogetherButton by AppSettings.showListenTogetherButton.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val disableBlendEffects by AppSettings.disableBlendEffects.collectAsStateWithLifecycle()
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
     val progressiveBlur by AppSettings.progressiveBlur.collectAsStateWithLifecycle()
     val liquidGlassSupported = isGlassSupported()
@@ -252,8 +261,10 @@ fun SettingsScreen(
     val signatureApiEnabled by AppSettings.signatureApiEnabled.collectAsStateWithLifecycle()
     val signatureApiUrl by AppSettings.signatureApiUrl.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
-    val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
+    val fullBleedDetailArtwork by AppSettings.fullBleedDetailArtwork.collectAsStateWithLifecycle()
+    val showTotalDuration by AppSettings.showTotalDuration.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
+    val hideLyricsPreview by AppSettings.hideLyricsPreview.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
     val translationLanguage by AppSettings.translationLanguage.collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
@@ -285,6 +296,11 @@ fun SettingsScreen(
     val showQueueHistory by AppSettings.showQueueHistory.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
+    val squareVideoThumbnails by AppSettings.squareVideoThumbnails.collectAsStateWithLifecycle()
+    val hideRecents by AppSettings.hideRecents.collectAsStateWithLifecycle()
+    val hideHomeVideos by AppSettings.hideHomeVideos.collectAsStateWithLifecycle()
+    val hideTopPicks by AppSettings.hideTopPicks.collectAsStateWithLifecycle()
+    val hideHomeMoods by AppSettings.hideHomeMoods.collectAsStateWithLifecycle()
     val smartVersionAlignment by AppSettings.smartVersionAlignment.collectAsStateWithLifecycle()
     val autoReplaceVideoWithAudio by AppSettings.autoReplaceVideoWithAudio.collectAsStateWithLifecycle()
     val artistCirclesPersonallyListened by AppSettings.artistCirclesPersonallyListened.collectAsStateWithLifecycle()
@@ -336,6 +352,7 @@ fun SettingsScreen(
     var importStatus by remember { mutableStateOf<String?>(null) }
     var confirmImport by remember { mutableStateOf(false) }
     var confirmClearSongCache by remember { mutableStateOf(false) }
+    var confirmDeleteAutomixModel by remember { mutableStateOf(false) }
     var showPerformanceWarning by remember { mutableStateOf(false) }
     var showPerformanceConfirmation by remember { mutableStateOf(false) }
     val backupScope = rememberCoroutineScope()
@@ -455,8 +472,19 @@ fun SettingsScreen(
                 // signs into are worth typing at this field even though none of
                 // them is named on the row itself.
                 row(accountTitle, "scrobbling", "last.fm", "listenbrainz") {
+                    val avatarUrl = account?.thumbnailUrl?.takeIf { signedIn }
                     SettingsRow(
                         icon = SfIcons.Person,
+                        iconContent = avatarUrl?.let { url ->
+                            {
+                                AsyncImage(
+                                    model = url,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.size(ICON_SIZE).clip(CircleShape),
+                                )
+                            }
+                        },
                         title = accountTitle,
                         subtitle = account?.email?.takeIf { it.isNotBlank() }
                             ?: stringResource(if (signedIn) R.string.signed_in else R.string.not_signed_in),
@@ -783,16 +811,19 @@ fun SettingsScreen(
                 }
             }
             val automixTitle = stringResource(R.string.automix)
-            row(automixTitle, "crossfade", "smart fade", "mix") {
+            val artTransitionTitle = stringResource(R.string.automix_art_transition)
+            val miniArtTransitionTitle = stringResource(R.string.automix_mini_art_transition)
+            row(
+                automixTitle, "crossfade", "smart fade", "mix",
+                artTransitionTitle.takeIf { smartFade }, miniArtTransitionTitle.takeIf { smartFade },
+            ) {
                 BypassedByBitPerfect(bitPerfectReady) {
                     SettingsRow(
                         icon = SfIcons.AutoAwesome,
                         title = automixTitle,
-                        subtitle = if (smartFade) {
-                            stringResource(R.string.automix_enabled_subtitle)
-                        } else {
-                            stringResource(R.string.automix_disabled_subtitle)
-                        },
+                        subtitle = stringResource(
+                            if (smartFade) R.string.automix_enabled_subtitle else R.string.automix_disabled_subtitle,
+                        ),
                         trailing = {
                             IosSwitch(
                                 checked = smartFade,
@@ -800,6 +831,84 @@ fun SettingsScreen(
                             )
                         },
                         onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
+                    )
+                    if (smartFade) {
+                        val artwork by AppSettings.autoMixArtwork.collectAsStateWithLifecycle()
+                        SettingsSubRow(
+                            title = artTransitionTitle,
+                            subtitle = stringResource(R.string.automix_art_transition_subtitle),
+                            checked = artwork.artTransition,
+                            onCheckedChange = AppSettings::setAutoMixArtTransition,
+                            enabled = !bitPerfectReady,
+                            subtitleEndPadding = 12.dp,
+                        )
+                        SettingsSubRow(
+                            title = miniArtTransitionTitle,
+                            subtitle = stringResource(R.string.automix_mini_art_transition_subtitle),
+                            checked = artwork.miniPlayerTransition,
+                            onCheckedChange = AppSettings::setAutoMixMiniPlayerTransition,
+                            enabled = !bitPerfectReady,
+                            titleMaxLines = 2,
+                            subtitleEndPadding = 12.dp,
+                        )
+                    }
+                }
+            }
+            // The weights Automix analyses with live outside the APK (see
+            // AutomixModels): switching Automix on fetches them by itself,
+            // and this row lets them be fetched ahead of time, retried after
+            // a failure, or removed to free the space.
+            val automixModelTitle = stringResource(R.string.automix_model)
+            row(automixModelTitle, "automix", "model", "download", "storage", "free space") {
+                val modelMb = (AutomixModels.totalBytes / 1_000_000).toInt()
+                when (val model = automixModels) {
+                    is AutomixModels.State.Downloading -> SettingsRow(
+                        icon = SfIcons.Download,
+                        title = automixModelTitle,
+                        subtitle = stringResource(
+                            R.string.automix_models_downloading,
+                            modelMb,
+                            (model.fraction * 100).toInt(),
+                        ),
+                    )
+                    // The action sits under the description rather than on the
+                    // right, where it squeezed the title and the text.
+                    AutomixModels.State.Failed -> SettingsRow(
+                        icon = SfIcons.Download,
+                        title = automixModelTitle,
+                        subtitleContent = {
+                            SubtitleWithAction(
+                                stringResource(R.string.automix_models_failed),
+                                stringResource(R.string.retry),
+                            )
+                        },
+                        onClick = AutomixModels::download,
+                        trailing = {},
+                    )
+                    AutomixModels.State.Ready -> SettingsRow(
+                        icon = SfIcons.Downloaded,
+                        title = automixModelTitle,
+                        subtitleContent = {
+                            SubtitleWithAction(
+                                stringResource(R.string.automix_model_ready, modelMb),
+                                stringResource(R.string.delete),
+                                actionColor = MaterialTheme.colorScheme.error,
+                            )
+                        },
+                        onClick = { confirmDeleteAutomixModel = true },
+                        trailing = {},
+                    )
+                    AutomixModels.State.Missing -> SettingsRow(
+                        icon = SfIcons.Download,
+                        title = automixModelTitle,
+                        subtitleContent = {
+                            SubtitleWithAction(
+                                stringResource(R.string.automix_model_missing),
+                                stringResource(R.string.automix_model_download, modelMb),
+                            )
+                        },
+                        onClick = AutomixModels::download,
+                        trailing = {},
                     )
                 }
             }
@@ -842,6 +951,21 @@ fun SettingsScreen(
                         onClick = { AppSettings.setSkipSilence(!skipSilence) },
                     )
                 }
+            }
+            val sleepTimerFadeOutTitle = stringResource(R.string.sleep_timer_fade_out)
+            row(sleepTimerFadeOutTitle, "sleep", "timer", "fade") {
+                SettingsRow(
+                    icon = SfIcons.SleepTimer,
+                    title = sleepTimerFadeOutTitle,
+                    subtitle = stringResource(R.string.sleep_timer_fade_out_subtitle),
+                    trailing = {
+                        IosSwitch(
+                            checked = sleepTimerFadeOut,
+                            onCheckedChange = AppSettings::setSleepTimerFadeOut,
+                        )
+                    },
+                    onClick = { AppSettings.setSleepTimerFadeOut(!sleepTimerFadeOut) },
+                )
             }
             val spatialAudioTitle = stringResource(R.string.spatial_audio)
             row(spatialAudioTitle, "surround", "3d") {
@@ -886,6 +1010,81 @@ fun SettingsScreen(
                         onClick = onEqualizer,
                     )
                 }
+            }
+        }
+
+        if (shows(SettingsCategory.CONTENT_PREFERENCES)) SearchableSettingsGroup(search, header = stringResource(R.string.content_preferences)) {
+            val hideRecentsTitle = stringResource(R.string.hide_recents)
+            row(hideRecentsTitle, "recents", "recent", "history", "feed", "home") {
+                SettingsRow(
+                    icon = SfIcons.VisibilityOff,
+                    title = hideRecentsTitle,
+                    trailing = {
+                        IosSwitch(
+                            checked = hideRecents,
+                            onCheckedChange = AppSettings::setHideRecents,
+                        )
+                    },
+                    onClick = { AppSettings.setHideRecents(!hideRecents) },
+                )
+            }
+            val hideHomeVideosTitle = stringResource(R.string.hide_home_videos)
+            row(hideHomeVideosTitle, "video", "music video", "feed", "home") {
+                SettingsRow(
+                    icon = SfIcons.VisibilityOff,
+                    title = hideHomeVideosTitle,
+                    subtitle = stringResource(R.string.hide_home_videos_subtitle),
+                    trailing = {
+                        IosSwitch(
+                            checked = hideHomeVideos,
+                            onCheckedChange = AppSettings::setHideHomeVideos,
+                        )
+                    },
+                    onClick = { AppSettings.setHideHomeVideos(!hideHomeVideos) },
+                )
+            }
+            val hideTopPicksTitle = stringResource(R.string.hide_top_picks)
+            row(hideTopPicksTitle, "top picks", "recommendations", "feed", "home") {
+                SettingsRow(
+                    icon = SfIcons.AutoAwesome,
+                    title = hideTopPicksTitle,
+                    trailing = {
+                        IosSwitch(
+                            checked = hideTopPicks,
+                            onCheckedChange = AppSettings::setHideTopPicks,
+                        )
+                    },
+                    onClick = { AppSettings.setHideTopPicks(!hideTopPicks) },
+                )
+            }
+            val hideHomeMoodsTitle = stringResource(R.string.hide_home_moods)
+            row(hideHomeMoodsTitle, "mood", "moods", "find your mood", "feed", "home") {
+                SettingsRow(
+                    icon = SfIcons.Star,
+                    title = hideHomeMoodsTitle,
+                    trailing = {
+                        IosSwitch(
+                            checked = hideHomeMoods,
+                            onCheckedChange = AppSettings::setHideHomeMoods,
+                        )
+                    },
+                    onClick = { AppSettings.setHideHomeMoods(!hideHomeMoods) },
+                )
+            }
+            val squareVideoThumbnailsTitle = stringResource(R.string.square_video_thumbnails)
+            row(squareVideoThumbnailsTitle, "video", "thumbnail", "cover", "artwork", "player") {
+                SettingsRow(
+                    icon = SfIcons.Apps,
+                    title = squareVideoThumbnailsTitle,
+                    subtitle = stringResource(R.string.square_video_thumbnails_subtitle),
+                    trailing = {
+                        IosSwitch(
+                            checked = squareVideoThumbnails,
+                            onCheckedChange = AppSettings::setSquareVideoThumbnails,
+                        )
+                    },
+                    onClick = { AppSettings.setSquareVideoThumbnails(!squareVideoThumbnails) },
+                )
             }
         }
 
@@ -940,6 +1139,21 @@ fun SettingsScreen(
                     onClick = { AppSettings.setReduceDynamicBlur(!reduceDynamicBlur) },
                 )
             }
+            val disableBlendEffectsTitle = stringResource(R.string.disable_blend_effects)
+            row(disableBlendEffectsTitle, "blend", "blending", "colour", "color", "tint", "player", "menu") {
+                SettingsRow(
+                    icon = SfIcons.Gradient,
+                    title = disableBlendEffectsTitle,
+                    subtitle = stringResource(R.string.disable_blend_effects_subtitle),
+                    trailing = {
+                        IosSwitch(
+                            checked = disableBlendEffects,
+                            onCheckedChange = AppSettings::setDisableBlendEffects,
+                        )
+                    },
+                    onClick = { AppSettings.setDisableBlendEffects(!disableBlendEffects) },
+                )
+            }
             val liquidGlassTitle = stringResource(R.string.liquid_glass)
             row(liquidGlassTitle, "glass", "blur") {
                 SettingsRow(
@@ -963,10 +1177,10 @@ fun SettingsScreen(
                     onClick = { AppSettings.setLiquidGlass(!liquidGlass) },
                 )
             }
-            // One line, like Direct Source Stream under Sources, and only while
-            // Liquid Glass is on: it qualifies the glass rather than standing on
-            // its own. Its own switch because it costs frames of its own. Reduce
-            // dynamic blur turns it off.
+            // One line each, like Direct Source Stream under Sources, and only
+            // while Liquid Glass is on: they qualify the glass rather than standing
+            // on their own. Progressive Blur has its own switch because it costs
+            // frames of its own. Reduce dynamic blur turns it off.
             if (liquidGlass && liquidGlassSupported) {
                 val glassTint by AppSettings.liquidGlassTint.collectAsStateWithLifecycle()
                 val tintPercent = (glassTint * 100).roundToInt()
@@ -1013,19 +1227,37 @@ fun SettingsScreen(
                     )
                 }
             }
-            val legacyMeshGradientTitle = stringResource(R.string.legacy_mesh_gradient)
-            row(legacyMeshGradientTitle, "background", "player") {
+            // Listed at every width: the page itself keeps the framed sleeve
+            // wherever a square the window's width wouldn't fit — see
+            // [ReleaseHeader].
+            val fullScreenDetailCoverTitle = stringResource(R.string.full_screen_detail_cover)
+            row(fullScreenDetailCoverTitle, "artwork", "album", "playlist", "cover") {
                 SettingsRow(
-                    icon = SfIcons.Gradient,
-                    title = legacyMeshGradientTitle,
-                    subtitle = stringResource(R.string.legacy_mesh_gradient_subtitle),
+                    icon = SfIcons.Fullscreen,
+                    title = fullScreenDetailCoverTitle,
+                    subtitle = stringResource(R.string.full_screen_detail_cover_subtitle),
                     trailing = {
                         IosSwitch(
-                            checked = legacyMeshGradient,
-                            onCheckedChange = AppSettings::setLegacyMeshGradient,
+                            checked = fullBleedDetailArtwork,
+                            onCheckedChange = AppSettings::setFullBleedDetailArtwork,
                         )
                     },
-                    onClick = { AppSettings.setLegacyMeshGradient(!legacyMeshGradient) },
+                    onClick = { AppSettings.setFullBleedDetailArtwork(!fullBleedDetailArtwork) },
+                )
+            }
+            val showTotalDurationTitle = stringResource(R.string.show_total_duration)
+            row(showTotalDurationTitle, "seek bar", "remaining time", "duration", "song length") {
+                SettingsRow(
+                    icon = SfIcons.Clock,
+                    title = showTotalDurationTitle,
+                    subtitle = stringResource(R.string.show_total_duration_subtitle),
+                    trailing = {
+                        IosSwitch(
+                            checked = showTotalDuration,
+                            onCheckedChange = AppSettings::setShowTotalDuration,
+                        )
+                    },
+                    onClick = { AppSettings.setShowTotalDuration(!showTotalDuration) },
                 )
             }
             val animatedCoverArtTitle = stringResource(R.string.animated_cover_art)
@@ -1120,21 +1352,29 @@ fun SettingsScreen(
                     }
                 }
             }
-            val syncedLyricsTitle = stringResource(R.string.synced_lyrics)
-            // Same reasoning as Animated cover art above: the lyrics source and
-            // translation rows are only here while this is on.
-            row(syncedLyricsTitle, "lyrics", "translation", "lrclib", "musixmatch") {
+            // This row replaced the old "Synced lyrics" switch, which is still
+            // the setting that turns the lookup itself off. Someone who switched
+            // that off before the change would be left without lyrics and no
+            // row to bring them back, so the line counts as hidden while
+            // either is set, and showing it turns lyrics back on too.
+            val lyricsHidden = hideLyricsPreview || !syncedLyrics
+            val setLyricsHidden: (Boolean) -> Unit = { hide ->
+                AppSettings.setHideLyricsPreview(hide)
+                if (!hide && !syncedLyrics) AppSettings.setSyncedLyrics(true)
+            }
+            val hideLyricsTitle = stringResource(R.string.hide_lyrics_preview)
+            row(hideLyricsTitle, "lyrics", "hide", "synced", "translation", "lrclib", "musixmatch") {
                 SettingsRow(
-                    icon = SfIcons.Notes,
-                    title = syncedLyricsTitle,
-                    subtitle = stringResource(R.string.synced_lyrics_subtitle),
+                    icon = SfIcons.VisibilityOff,
+                    title = hideLyricsTitle,
+                    subtitle = stringResource(R.string.hide_lyrics_preview_subtitle),
                     trailing = {
                         IosSwitch(
-                            checked = syncedLyrics,
-                            onCheckedChange = AppSettings::setSyncedLyrics,
+                            checked = lyricsHidden,
+                            onCheckedChange = setLyricsHidden,
                         )
                     },
-                    onClick = { AppSettings.setSyncedLyrics(!syncedLyrics) },
+                    onClick = { setLyricsHidden(!lyricsHidden) },
                 )
             }
             // Nothing to choose between while the feature is off, and the
@@ -1409,6 +1649,10 @@ fun SettingsScreen(
                     onClick = { confirmImport = true },
                 )
             }
+            val driveBackupTitle = stringResource(R.string.drive_backup_title)
+            row(driveBackupTitle, "backup", "restore", "google", "drive", "cloud") {
+                DriveBackupSettingsRow(title = driveBackupTitle, onClick = onDriveBackup)
+            }
         }
 
         // No footer: it only restated the stop-on-close row's own subtitle,
@@ -1540,20 +1784,6 @@ fun SettingsScreen(
             }
         }
 
-        if (shows(SettingsCategory.LANGUAGE)) SearchableSettingsGroup(search, header = stringResource(R.string.language)) {
-            val appLanguageTitle = stringResource(R.string.app_language)
-            row(appLanguageTitle, "locale", "translate") {
-                val selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.toLanguageTag()
-                    ?: Locale.getDefault().toLanguageTag()
-                SettingsRow(
-                    icon = SfIcons.Language,
-                    title = appLanguageTitle,
-                    subtitle = stringResource(languageDisplayNameRes(selectedLanguage)),
-                    onClick = onAppLanguage,
-                )
-            }
-        }
-
         if (shows(SettingsCategory.ADVANCED)) SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {
             val artistCirclesPersonallyListenedTitle = stringResource(R.string.artist_circles_personally_listened)
             row(artistCirclesPersonallyListenedTitle, "artist", "circles", "homepage", "home", "personally", "listened", "library", "mode") {
@@ -1678,6 +1908,20 @@ fun SettingsScreen(
             }
         }
 
+        if (shows(SettingsCategory.LANGUAGE)) SearchableSettingsGroup(search, header = stringResource(R.string.language)) {
+            val appLanguageTitle = stringResource(R.string.app_language)
+            row(appLanguageTitle, "locale", "translate") {
+                val selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.toLanguageTag()
+                    ?: Locale.getDefault().toLanguageTag()
+                SettingsRow(
+                    icon = SfIcons.Language,
+                    title = appLanguageTitle,
+                    subtitle = stringResource(languageDisplayNameRes(selectedLanguage)),
+                    onClick = onAppLanguage,
+                )
+            }
+        }
+
         // Read after every group above has had its turn at the query, which is
         // what makes this an accurate "nothing here" rather than a guess.
         if (searching && !search.anyMatch) {
@@ -1741,6 +1985,37 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmClearSongCache = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    // Deleting also turns Automix off: left on, its next analysis pass would
+    // simply download the model again.
+    if (confirmDeleteAutomixModel) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteAutomixModel = false },
+            title = { Text(stringResource(R.string.automix_model_delete_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.automix_model_delete_warning,
+                        (AutomixModels.totalBytes / 1_000_000).toInt(),
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeleteAutomixModel = false
+                    AppSettings.setSmartFadeEnabled(false)
+                    AutomixModels.delete()
+                }) {
+                    Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteAutomixModel = false }) {
                     Text(stringResource(R.string.cancel))
                 }
             },
@@ -1935,7 +2210,7 @@ fun SettingsScreen(
 }
 
 /** "3 months of listening" — the unit a backup is actually measured in. */
-private fun Context.countOfMonths(months: Int): String = if (months == 0) {
+internal fun Context.countOfMonths(months: Int): String = if (months == 0) {
     getString(R.string.no_listening_history)
 } else {
     resources.getQuantityString(R.plurals.listening_month_count, months, months)
@@ -1966,6 +2241,24 @@ private fun ThemeMode.localizedLabel(): String = stringResource(
         ThemeMode.SYSTEM -> R.string.system
         ThemeMode.LIGHT -> R.string.light
         ThemeMode.DARK -> R.string.dark
+    },
+)
+
+@Composable
+private fun PlayerTheme.localizedLabel(): String = stringResource(
+    when (this) {
+        PlayerTheme.DEFAULT -> R.string.player_theme_default
+        PlayerTheme.LEGACY -> R.string.player_theme_legacy
+        PlayerTheme.SIMPLE -> R.string.player_theme_simple
+    },
+)
+
+@Composable
+private fun PlayerTheme.description(): String = stringResource(
+    when (this) {
+        PlayerTheme.DEFAULT -> R.string.player_theme_default_subtitle
+        PlayerTheme.LEGACY -> R.string.player_theme_legacy_subtitle
+        PlayerTheme.SIMPLE -> R.string.player_theme_simple_subtitle
     },
 )
 
@@ -2334,7 +2627,9 @@ private inline fun SearchableSettingsGroup(
                 // has nothing to sit under, so it is given that room back.
                 index == 0 && !entry.divided -> Spacer(Modifier.height(10.dp))
             }
-            entry.content()
+            CompositionLocalProvider(LocalSubRowStandalone provides entry.divided) {
+                entry.content()
+            }
         }
     }
 }
@@ -2413,6 +2708,31 @@ internal fun RowDivider() {
 }
 
 /**
+ * A row's description with what tapping the row does set under it in
+ * [actionColor] — for rows whose action is too long to sit on the right.
+ */
+@Composable
+private fun SubtitleWithAction(
+    subtitle: String,
+    action: String,
+    actionColor: Color = MaterialTheme.colorScheme.primary,
+) {
+    Text(
+        text = subtitle,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 5,
+    )
+    Text(
+        text = action,
+        style = MaterialTheme.typography.bodyMedium,
+        fontWeight = FontWeight.Medium,
+        color = actionColor,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+}
+
+/**
  * The standard row: glyph, title, optional subtitle, and on the right either
  * [trailing] (a switch, say) or the current [value] followed by a chevron.
  *
@@ -2420,6 +2740,9 @@ internal fun RowDivider() {
  * than a Material icon — the Dolby double-D, which is a mark and not something
  * to approximate with the nearest speaker outline. Exactly one of it and [icon]
  * is expected; the painter wins where both are given.
+ *
+ * [iconContent] takes the glyph's place outright — the account row's avatar —
+ * and wins over both.
  */
 @Composable
 internal fun SettingsRow(
@@ -2431,6 +2754,7 @@ internal fun SettingsRow(
     badge: String? = null,
     enabled: Boolean = true,
     iconPainter: Painter? = null,
+    iconContent: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
@@ -2443,7 +2767,9 @@ internal fun SettingsRow(
             .padding(horizontal = ROW_INSET, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (iconPainter != null) {
+        if (iconContent != null) {
+            iconContent()
+        } else if (iconPainter != null) {
             Icon(
                 painter = iconPainter,
                 contentDescription = null,
@@ -2503,9 +2829,19 @@ internal fun SettingsRow(
 }
 
 /**
+ * Whether the [SettingsSubRow] being drawn is a row of its own, under a
+ * divider or at the top of its card, rather than hanging off the row above.
+ * Set per row by [SearchableSettingsGroup], which knows which rows are divided.
+ */
+private val LocalSubRowStandalone = staticCompositionLocalOf { false }
+
+/**
  * A toggle that reads as part of the option above it rather than a setting
  * of its own: no icon, no divider, and pulled up close against its parent
  * instead of getting the same breathing room a full [SettingsRow] gets.
+ *
+ * Also drawn as a plain toggle row of its own, under a divider. There it gets
+ * the same gap above its title as below it, or the title sits on the line.
  */
 @Composable
 internal fun SettingsSubRow(
@@ -2515,13 +2851,21 @@ internal fun SettingsSubRow(
     badge: String? = null,
     subtitle: String? = null,
     enabled: Boolean = true,
+    indent: Dp = 0.dp,
+    titleMaxLines: Int = 1,
+    subtitleEndPadding: Dp = 0.dp,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .alpha(if (enabled) 1f else 0.45f)
-            .padding(start = ROW_INSET, end = ROW_INSET, top = 0.dp, bottom = 10.dp),
+            .padding(
+                start = ROW_INSET + indent,
+                end = ROW_INSET,
+                top = if (LocalSubRowStandalone.current) 10.dp else 0.dp,
+                bottom = 10.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -2530,7 +2874,7 @@ internal fun SettingsSubRow(
                     text = title,
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
+                    maxLines = titleMaxLines,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (badge != null) {
@@ -2541,6 +2885,7 @@ internal fun SettingsSubRow(
             if (subtitle != null) {
                 Text(
                     text = subtitle,
+                    modifier = Modifier.padding(end = subtitleEndPadding),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 5,
@@ -2681,8 +3026,9 @@ internal fun SegmentedControl(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    disabled: Set<Int> = emptySet(),
 ) {
-    PillSegmentedControl(options, selectedIndex, onSelect, modifier, enabled)
+    PillSegmentedControl(options, selectedIndex, onSelect, modifier, enabled, disabled)
 }
 
 // ---- Pages ------------------------------------------------------------------
@@ -2695,6 +3041,7 @@ internal fun SegmentedControl(
 enum class SettingsCategory(@param:StringRes val title: Int) {
     DOWNLOADS(R.string.downloads),
     PLAYBACK(R.string.playback),
+    CONTENT_PREFERENCES(R.string.content_preferences),
     APPEARANCE(R.string.appearance),
     PERFORMANCE(R.string.performance),
     LOCAL_MUSIC(R.string.local_music),
@@ -2709,6 +3056,7 @@ enum class SettingsCategory(@param:StringRes val title: Int) {
         get() = when (this) {
             DOWNLOADS -> SfIcons.Download
             PLAYBACK -> SfIcons.PlayCircle
+            CONTENT_PREFERENCES -> SfIcons.Video
             APPEARANCE -> SfIcons.Appearance
             PERFORMANCE -> SfIcons.Performance
             LOCAL_MUSIC -> SfIcons.LibraryMusic
@@ -2878,12 +3226,14 @@ internal fun <T> ChoiceGroup(
     footer: String?,
     detail: (@Composable (T) -> String)? = null,
     enabled: (T) -> Boolean = { true },
+    /** Set where the card is one of several on its page rather than the whole of it. */
+    header: String? = null,
     onSelect: (T) -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
     // Every page it is the body of leads with its large heading — see
     // [SettingsPageTitle], whose own bottom padding is all the room it needs.
-    SettingsGroup(footer = footer, topSpacing = 0.dp) {
+    SettingsGroup(header = header, footer = footer, topSpacing = 0.dp) {
         options.forEachIndexed { index, option ->
             if (index > 0) {
                 HorizontalDivider(

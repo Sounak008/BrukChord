@@ -144,6 +144,7 @@ import com.music.bitchord.data.canvas.keyColors
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
 import com.music.bitchord.data.canvas.CanvasArtwork
+import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
@@ -209,6 +210,20 @@ private const val SLEEVE_MAX_HEIGHT = 0.5f
 
 private val SLEEVE_SHAPE = RoundedCornerShape(12.dp)
 private val SLEEVE_SHADOW = 18.dp
+
+/**
+ * The tallest a full-bleed sleeve may be, as a fraction of the page's height.
+ * A square the page's width that would stand taller than this — a landscape
+ * window, a wide tablet — keeps the framed sleeve, so the title is never
+ * pushed off the bottom of the screen.
+ */
+private const val FULL_BLEED_MAX_HEIGHT = 0.62f
+
+/** How much of a full-bleed sleeve's foot dissolves into the page — the player's banner's share. */
+private const val FULL_BLEED_FADE_FRACTION = 0.42f
+
+/** How far the title rides up into that dissolve, where the sleeve has all but gone. */
+private val FULL_BLEED_TITLE_OVERLAP = 44.dp
 
 /** Shuffle and Add to Library either side of the release page's Play pill. */
 private val RELEASE_SIDE_BUTTON = 50.dp
@@ -299,6 +314,8 @@ fun DetailScreen(
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
     onShuffle: (List<Song>) -> Unit,
+    /** The Play button: the songs from the top, in order. */
+    onPlay: (List<Song>) -> Unit,
     onSectionItemClick: (ShelfItem) -> Unit,
     onArtistClick: (String, String) -> Unit,
     onAddSuggested: (Song) -> Unit,
@@ -486,7 +503,9 @@ fun DetailScreen(
     // Albums only: a playlist's artwork is a collage and an artist page's is a
     // photograph, and neither is something a label publishes a canvas for.
     val canvasEnabled by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
-    val prioritizeSpotifyCanvas by AppSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
+    val fullBleedArtwork by AppSettings.fullBleedDetailArtwork.collectAsStateWithLifecycle()
+    val prioritizeSpotifyCanvas by AppSettings.effectivePrioritizeSpotifyCanvas.collectAsStateWithLifecycle()
+    val disableSpotifyCanvas by AppSettings.disableSpotifyCanvas.collectAsStateWithLifecycle()
     // The credit line the header shows is the artist as far as the catalogue
     // services are concerned. A browse card's subtitle sometimes omits it, in
     // which case the tracks themselves know who it is.
@@ -504,13 +523,14 @@ fun DetailScreen(
         prepare = isAlbum,
     )
     val firstSong = songs.firstOrNull()
-    LaunchedEffect(page.browseId, page.title, credit, songs.size, firstSong?.videoId, canvasEnabled, prioritizeSpotifyCanvas) {
+    LaunchedEffect(page.browseId, page.title, credit, songs.size, firstSong?.videoId, canvasEnabled, prioritizeSpotifyCanvas, disableSpotifyCanvas) {
         // An artist's clip is set below, by the lookup that finds it.
         if (isArtist) return@LaunchedEffect
         if (!canvasEnabled || !isAlbum) {
             canvas = null
             return@LaunchedEffect
         }
+        if (disableSpotifyCanvas && canvas?.source == CanvasSource.SPOTIFY) canvas = null
         val artistName = credit.ifBlank { firstSong?.artist.orEmpty() }
         var found: CanvasArtwork? = null
         if (page.title.isNotBlank() && artistName.isNotBlank()) {
@@ -528,6 +548,7 @@ fun DetailScreen(
     LaunchedEffect(artistVideo, canvasEnabled) {
         if (isArtist) canvas = artistVideo?.takeIf { canvasEnabled }?.let { CanvasArtwork(url = it) }
     }
+    val visibleCanvas = canvas?.takeIf { !disableSpotifyCanvas || it.source != CanvasSource.SPOTIFY }
 
     // Opening the search carries the page up to it, so the field lands just
     // clear of the frosted bar with the tracks under it rather than at the foot
@@ -569,6 +590,7 @@ fun DetailScreen(
                 val artHeight = (maxWidth / ARTIST_PHOTO_RATIO).coerceAtMost(maxHeight * 0.6f)
                 val albumArtHeight = (topBarContentPadding() + 410.dp).coerceAtMost(maxHeight * 0.70f)
                 val sleeveSize = (maxWidth * SLEEVE_FRACTION).coerceAtMost(maxHeight * SLEEVE_MAX_HEIGHT)
+                val fullBleedSleeve = fullBleedArtwork && maxWidth <= maxHeight * FULL_BLEED_MAX_HEIGHT
                 // A folder's grid view: the same column count the Library's
                 // "Show all" grids reach at this width.
                 val gridColumns = libraryGrid(maxWidth - PAGE_GUTTER * 2).columns
@@ -581,7 +603,7 @@ fun DetailScreen(
                     PageBackground(
                         page = page,
                         palette = palette,
-                        canvas = canvas,
+                        canvas = visibleCanvas,
                         artHeight = artHeight,
                         listState = listState,
                         heroUrl = appleArt?.heroUrl,
@@ -618,9 +640,10 @@ fun DetailScreen(
                         page = page,
                         palette = palette,
                         sleeveSize = sleeveSize,
-                        canvas = canvas,
+                        fullBleed = fullBleedSleeve,
+                        canvas = visibleCanvas,
                         songs = songs,
-                        onPlay = { onSongClick(songs, 0) },
+                        onPlay = { onPlay(songs) },
                         onShuffle = { onShuffle(songs) },
                         // A folder's credit says where its tracks live, not who made them.
                         onArtistClick = onArtistClick.takeIf { folder == null },
@@ -652,7 +675,7 @@ fun DetailScreen(
             if (songs.isNotEmpty() && isArtist) {
                 item(key = "actions") {
                     ActionRow(
-                        onPlay = { onSongClick(songs, 0) },
+                        onPlay = { onPlay(songs) },
                         onShuffle = { onShuffle(songs) },
                         subscription = page.subscription?.takeIf { onToggleSubscription != null },
                         onToggleSubscription = onToggleSubscription,
@@ -945,6 +968,12 @@ private fun ReleaseHeader(
     page: DetailPage,
     palette: ArtworkPalette,
     sleeveSize: Dp,
+    /**
+     * Runs the sleeve the page's width off the top of the screen, dissolving
+     * into the page colour like the player's banner, in place of the framed
+     * one. Everything under it is unchanged.
+     */
+    fullBleed: Boolean,
     canvas: CanvasArtwork?,
     songs: List<Song>,
     onPlay: () -> Unit,
@@ -962,12 +991,16 @@ private fun ReleaseHeader(
     // the first one speaks for the whole page, the same source the rows'
     // own long-press "Open artist" already reads from.
     val artist = songs.firstOrNull()
+    var artFailed by remember(page.thumbnailUrl) { mutableStateOf(false) }
+    // A placeholder is a sleeve or it is nothing, as on the player: blown out
+    // to the page's width it would only tint the top of the screen.
+    val bleed = fullBleed && page.thumbnailUrl != null && !artFailed
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            // Clear of the floating bar, which the sleeve no longer runs under.
-            .padding(top = topBarContentPadding(), bottom = 18.dp),
+            // Clear of the floating bar, which only a full-bleed sleeve runs under.
+            .padding(top = if (bleed) 0.dp else topBarContentPadding(), bottom = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (isAlbum) {
@@ -1252,6 +1285,19 @@ private fun DetailSearchField(
 
 internal fun List<Song>.sortedForDetail(sort: SongSort): List<Song> = when (sort) {
     SongSort.DEFAULT -> this
+    // Untagged rows go after the tagged ones, in the order they already had,
+    // rather than interleaving at the head; a page with no tags at all is
+    // left exactly as it came.
+    SongSort.TRACK_NUMBER -> if (none { it.trackNumber != null }) {
+        this
+    } else {
+        withIndex()
+            .sortedWith(
+                compareBy<IndexedValue<Song>> { (_, song) -> song.trackNumber ?: Int.MAX_VALUE }
+                    .thenBy { (position, _) -> position },
+            )
+            .map { it.value }
+    }
     SongSort.TITLE_ASC -> sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
     SongSort.TITLE_DESC -> sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.title })
     // A catalogue row carries no added date, so its place in the running
