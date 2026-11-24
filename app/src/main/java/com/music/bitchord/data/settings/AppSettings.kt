@@ -643,15 +643,6 @@ object AppSettings {
      */
     val fullBleedArtwork = MutableStateFlow(true)
 
-    /**
-     * The album and playlist page's answer to [fullBleedArtwork]: the sleeve
-     * runs edge to edge off the top of the screen and dissolves into the page
-     * colour, instead of sitting framed in the middle. Everything under it —
-     * the page colour, title, credit and buttons — stays as it is. Off by
-     * default, the framed sleeve being the page's own look.
-     */
-    val fullBleedDetailArtwork = MutableStateFlow(false)
-
     /** Shows the track's total duration at the end of the player scrubber. */
     val showTotalDuration = MutableStateFlow(false)
 
@@ -1165,7 +1156,6 @@ object AppSettings {
         signatureApiEnabled.value = prefs.getBoolean(KEY_SIGNATURE_API_ENABLED, false)
         signatureApiUrl.value = normalizeSignatureApiUrl(prefs.getString(KEY_SIGNATURE_API_URL, "").orEmpty())
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
-        fullBleedDetailArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_DETAIL_ARTWORK, false)
         showTotalDuration.value = prefs.getBoolean(KEY_SHOW_TOTAL_DURATION, false)
         coloredSeekBar.value = prefs.getBoolean(KEY_COLORED_SEEKBAR, true)
         // The old legacy mesh switch answers until a theme has been picked.
@@ -1875,11 +1865,6 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_FULL_BLEED_ARTWORK, value).apply()
     }
 
-    fun setFullBleedDetailArtwork(value: Boolean) {
-        fullBleedDetailArtwork.value = value
-        prefs.edit().putBoolean(KEY_FULL_BLEED_DETAIL_ARTWORK, value).apply()
-    }
-
     fun setShowTotalDuration(value: Boolean) {
         showTotalDuration.value = value
         prefs.edit().putBoolean(KEY_SHOW_TOTAL_DURATION, value).apply()
@@ -2511,7 +2496,6 @@ object AppSettings {
     private const val KEY_SIGNATURE_API_ENABLED = "signature_api_enabled"
     private const val KEY_SIGNATURE_API_URL = "signature_api_url"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
-    private const val KEY_FULL_BLEED_DETAIL_ARTWORK = "full_bleed_detail_artwork"
     private const val KEY_SHOW_TOTAL_DURATION = "show_total_duration"
     private const val KEY_COLORED_SEEKBAR = "colored_seekbar"
     private const val KEY_PLAYER_THEME = "player_theme"

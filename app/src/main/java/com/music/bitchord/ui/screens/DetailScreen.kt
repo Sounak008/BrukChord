@@ -503,7 +503,7 @@ fun DetailScreen(
     // Albums only: a playlist's artwork is a collage and an artist page's is a
     // photograph, and neither is something a label publishes a canvas for.
     val canvasEnabled by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
-    val fullBleedArtwork by AppSettings.fullBleedDetailArtwork.collectAsStateWithLifecycle()
+    val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val prioritizeSpotifyCanvas by AppSettings.effectivePrioritizeSpotifyCanvas.collectAsStateWithLifecycle()
     val disableSpotifyCanvas by AppSettings.disableSpotifyCanvas.collectAsStateWithLifecycle()
     // The credit line the header shows is the artist as far as the catalogue
@@ -577,9 +577,8 @@ fun DetailScreen(
             // An artist's photograph dissolves into [ArtworkPalette.wash]; an album
             // page takes the solid color picked up from the lowest edge of the album;
             // a playlist takes [ArtworkPalette.background].
-            // Full screen album art is enabled only for tall portrait animated canvases (Apple motion 3:4 etc.),
-            // and disabled for static album covers and square/almost square animated covers.
-            val showFullScreenAlbumArt = isAlbum && fullBleedArtwork && visibleCanvas != null && visibleCanvas.portraitUrl != null
+            // Animated cover art always goes full screen when enabled, while static (non-animated) artwork stays in squares.
+            val showFullScreenAlbumArt = isAlbum && fullBleedArtwork && visibleCanvas != null
             val pageColor = if (isArtist) palette.wash else if (showFullScreenAlbumArt) albumSolidColor else palette.background
             BoxWithConstraints(Modifier.fillMaxSize().background(pageColor)) {
                 // Measured rather than read off the window. The player runs

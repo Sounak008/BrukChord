@@ -1575,13 +1575,9 @@ fun NowPlayingScreen(
     // API level now, and both layers answer to this.
     val spotifyCanvasOnPhone = canvas?.source == CanvasSource.SPOTIFY &&
         playerFillsWindow(windowWidth)
-    // Full screen / full bleed album art is disabled for static covers as well as square
-    // or almost square animated covers. Only tall portrait/vertical motion artwork
-    // (Spotify 9:16 or Apple 3:4 motion canvas) expands full-bleed across the player.
-    val hasPortraitMotionCanvas = canvas != null && (
-        canvas.source == CanvasSource.SPOTIFY || canvas.portraitUrl != null
-    )
-    val heroMode = !videoMode && fullBleedArt && playerFillsWindow(windowWidth) && hasPortraitMotionCanvas
+    // Animated cover art always goes full screen when enabled, while static (non-animated) artwork stays in squares.
+    val hasAnimatedCanvas = canvas != null
+    val heroMode = !videoMode && fullBleedArt && playerFillsWindow(windowWidth) && hasAnimatedCanvas
 
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top
