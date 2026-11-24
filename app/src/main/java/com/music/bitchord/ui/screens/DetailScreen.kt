@@ -593,7 +593,7 @@ fun DetailScreen(
                 val artHeight = (maxWidth / ARTIST_PHOTO_RATIO).coerceAtMost(maxHeight * 0.6f)
                 val albumArtHeight = (topBarContentPadding() + 410.dp).coerceAtMost(maxHeight * 0.70f)
                 val sleeveSize = (maxWidth * SLEEVE_FRACTION).coerceAtMost(maxHeight * SLEEVE_MAX_HEIGHT)
-                val fullBleedSleeve = fullBleedArtwork && maxWidth <= maxHeight * FULL_BLEED_MAX_HEIGHT
+                val fullBleedSleeve = showFullScreenAlbumArt && maxWidth <= maxHeight * FULL_BLEED_MAX_HEIGHT
                 // A folder's grid view: the same column count the Library's
                 // "Show all" grids reach at this width.
                 val gridColumns = libraryGrid(maxWidth - PAGE_GUTTER * 2).columns
@@ -1013,6 +1013,7 @@ private fun ReleaseHeader(
                 Modifier
                     .size(sleeveSize)
                     .shadow(SLEEVE_SHADOW, SLEEVE_SHAPE)
+                    .clip(SLEEVE_SHAPE)
                     .background(palette.elevated)
                     .thumbnailBorder(SLEEVE_SHAPE),
             ) {
@@ -1050,11 +1051,11 @@ private fun ReleaseHeader(
                         modifier = Modifier.matchParentSize(),
                     )
                 }
-                // Dimmer overlay for better contrast and readability of surrounding text
+                // Noticeable dimming overlay for better contrast and readability of surrounding text
                 Box(
                     Modifier
                         .matchParentSize()
-                        .background(Color.Black.copy(alpha = 0.18f)),
+                        .background(Color.Black.copy(alpha = 0.38f)),
                 )
             }
         }
@@ -1547,11 +1548,11 @@ private fun AlbumPageBackground(
                     modifier = Modifier.matchParentSize(),
                 )
             }
-            // Dimmer overlay for better readability of header titles
+            // Noticeable dimming overlay for better readability of header titles
             Box(
                 Modifier
                     .matchParentSize()
-                    .background(Color.Black.copy(alpha = 0.22f)),
+                    .background(Color.Black.copy(alpha = 0.38f)),
             )
         }
     }

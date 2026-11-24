@@ -21,7 +21,6 @@ import androidx.core.content.res.ResourcesCompat
 import com.music.bitchord.R
 import com.music.bitchord.ui.replay.Fonts
 import com.music.bitchord.ui.replay.drawArtwork
-import com.music.bitchord.ui.replay.drawLogo
 import com.music.bitchord.ui.replay.ellipsised
 import com.music.bitchord.ui.replay.loadBitmap
 import kotlin.math.roundToInt

@@ -1575,14 +1575,13 @@ fun NowPlayingScreen(
     // API level now, and both layers answer to this.
     val spotifyCanvasOnPhone = canvas?.source == CanvasSource.SPOTIFY &&
         playerFillsWindow(windowWidth)
-    // Spotify Canvas is the player background on a phone, independent of the
-    // still-art full-bleed preference. Other providers and static artwork keep
-    // answering to that preference exactly as before.
-    // A music video sits in the card's place at its own 16:9, never full bleed.
-    val heroMode = !videoMode && (
-        spotifyCanvasOnPhone ||
-            (fullBleedArt && playerFillsWindow(windowWidth))
-        )
+    // Full screen / full bleed album art is disabled for static covers as well as square
+    // or almost square animated covers. Only tall portrait/vertical motion artwork
+    // (Spotify 9:16 or Apple 3:4 motion canvas) expands full-bleed across the player.
+    val hasPortraitMotionCanvas = canvas != null && (
+        canvas.source == CanvasSource.SPOTIFY || canvas.portraitUrl != null
+    )
+    val heroMode = !videoMode && fullBleedArt && playerFillsWindow(windowWidth) && hasPortraitMotionCanvas
 
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top

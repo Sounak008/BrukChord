@@ -505,9 +505,6 @@ object AppSettings {
     /** Hides the lyrics preview strip on the main and mini player screens. */
     val hideLyricsPreview = MutableStateFlow(false)
 
-    /** Draws the BitChord mark at the top of a shared lyrics card. */
-    val lyricsCardLogo = MutableStateFlow(true)
-
     val showQueueHistory = MutableStateFlow(false)
 
     /** Swiping a song row plays it next instead of adding it to the end of the queue. */
@@ -1134,7 +1131,6 @@ object AppSettings {
         hideStatusBarInPlayer.value = prefs.getBoolean(KEY_HIDE_STATUS_BAR_IN_PLAYER, false)
         hideSongStatus.value = prefs.getBoolean(KEY_HIDE_SONG_STATUS, false)
         hideLyricsPreview.value = prefs.getBoolean(KEY_HIDE_LYRICS_PREVIEW, false)
-        lyricsCardLogo.value = prefs.getBoolean(KEY_LYRICS_CARD_LOGO, true)
         showQueueHistory.value = prefs.getBoolean(KEY_SHOW_QUEUE_HISTORY, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
@@ -1606,11 +1602,6 @@ object AppSettings {
     fun setHideLyricsPreview(value: Boolean) {
         hideLyricsPreview.value = value
         prefs.edit().putBoolean(KEY_HIDE_LYRICS_PREVIEW, value).apply()
-    }
-
-    fun setLyricsCardLogo(value: Boolean) {
-        lyricsCardLogo.value = value
-        prefs.edit().putBoolean(KEY_LYRICS_CARD_LOGO, value).apply()
     }
 
     fun setShowQueueHistory(value: Boolean) {
@@ -2493,7 +2484,6 @@ object AppSettings {
     private const val KEY_HIDE_STATUS_BAR_IN_PLAYER = "hide_status_bar_in_player"
     private const val KEY_HIDE_SONG_STATUS = "hide_song_status"
     private const val KEY_HIDE_LYRICS_PREVIEW = "hide_lyrics_preview"
-    private const val KEY_LYRICS_CARD_LOGO = "lyrics_card_logo"
     private const val KEY_SHOW_QUEUE_HISTORY = "show_queue_history"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
