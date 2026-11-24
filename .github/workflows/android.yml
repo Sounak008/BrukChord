@@ -126,7 +126,7 @@ jobs:
       with:
         tag_name: ${{ env.TAG_NAME }}
         name: BrukChord ${{ env.TAG_NAME }}
-        generate_release_notes: true
+        body_path: release-notes.md
         files: release-assets/*
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

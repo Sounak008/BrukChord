@@ -1,0 +1,34 @@
+# Changelog
+
+## 1.10
+
+- Added Google Drive backup and restore to easily save and restore your settings and playlists
+- Added Replay Mix and animated listening recap stories
+- Added a Radio and Mixes tab to quickly find stations and custom mixes
+- Added full-bleed album cover backdrop blur on detail pages with dimmed covers for better contrast and readability
+- Redesigned now playing buttons with clean borderless icons and spring bounce animations
+- Added an optional accent color toggle for the player seekbar
+- Added animated video sharing for synchronized lyrics
+- Added official timed lyrics from YouTube Music with smooth word highlighting
+- Added high quality audio streaming support for signed-in YouTube Premium accounts
+- Added swipe gestures and multi-selection to easily manage, reorder, and remove songs in the queue
+- Added search inside playlists when adding songs, and the ability to filter search results to your library only
+- Added a gradual 30-second volume fade out when the sleep timer ends
+- Added a Quick Settings tile to quickly play or pause music from your notification shade
+- Added support for AC-4 audio playback and loudness limiting for spatial audio
+- Improved artwork display so animated motion covers expand properly while square covers stay neatly framed
+- Tapping the active navigation bar tab now smoothly scrolls back to the top of the page
+- Fixed home screen artist circles to open artist pages directly
+- Improved app performance, memory management, and playback reliability across phone and TV
+
+## 1.9.5
+
+- Added Personal Mix based on recent listening
+- Added Moods Mix for different vibes and genres
+- Added option to replace video tracks with official songs for better sound quality
+- Faster app startup
+- Home screen now loads instantly from cache
+- Smoother scrolling and faster image loading
+- Fixed tapping on artists from the home screen
+- Added crash log saving to storage
+- Kept only Android and Android TV release workflows
