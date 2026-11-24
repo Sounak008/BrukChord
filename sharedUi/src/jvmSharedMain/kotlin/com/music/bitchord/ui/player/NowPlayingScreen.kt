@@ -64,7 +64,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.MoreHoriz
@@ -214,9 +213,6 @@ internal const val ART_RETRY_DELAY_MS = 1_500L
  * enough not to be noticed on a track that has no album to find.
  */
 internal const val ALBUM_SETTLE_MS = 700L
-
-/** Long enough for the post-upgrade rollback cue to be noticed without lingering. */
-private const val REVERT_CUE_MS = 2_600L
 
 /**
  * How close the player's reported position has to get to a released scrub
@@ -1323,19 +1319,6 @@ fun NowPlayingScreen(
     // so the words change underneath them and the panel stays. Closing it
     // dropped them back onto the artwork every few minutes with no gesture of
     // their own behind it.
-    // A brief, non-modal confirmation that the three-dot menu now contains a
-    // way back to the original YouTube rendition. The control keeps its usual
-    // action — opening the menu — so the cue teaches rather than surprises.
-    var showRevertCue by remember(song.videoId) { mutableStateOf(false) }
-    LaunchedEffect(song.videoId, qualityUpgraded) {
-        if (!qualityUpgraded) {
-            showRevertCue = false
-            return@LaunchedEffect
-        }
-        showRevertCue = true
-        delay(REVERT_CUE_MS)
-        showRevertCue = false
-    }
 
     // Lyrics are meant to be read continuously, so hold off the device's normal
     // screen timeout — but only while the panel is actually up. Closing it hands
@@ -2520,7 +2503,6 @@ fun NowPlayingScreen(
                                     infoTransition = infoTransition,
                                     signedIn = signedIn,
                                     likeStatus = likeStatus,
-                                    showRevertCue = showRevertCue,
                                     onToggleLike = onToggleLike,
                                     onOpenMenu = onOpenMenu,
                                     onOpenAlbum = onOpenAlbum,
@@ -4169,26 +4151,23 @@ fun NowPlayingScreen(
                                     !lyrics.isNullOrEmpty() && (!lyricsControlsOpen || lyricPicker.picking)
                                 CircleGlyph(
                                     icon = when {
-                                        showRevertCue -> Icons.AutoMirrored.Rounded.Undo
                                         lyricsShareGlyphVisible && lyricPicker.picking -> Icons.Rounded.Close
                                         lyricsShareGlyphVisible -> Icons.Rounded.IosShare
                                         else -> Icons.Rounded.MoreHoriz
                                     },
                                     contentDescription = stringResource(
                                         when {
-                                            showRevertCue -> Res.string.more
                                             lyricsShareGlyphVisible && lyricPicker.picking -> Res.string.cancel
                                             lyricsShareGlyphVisible -> Res.string.share
                                             else -> Res.string.more
                                         },
                                     ),
                                     onClick = when {
-                                        showRevertCue -> onOpenMenu
                                         lyricsShareGlyphVisible && lyricPicker.picking -> lyricPicker.cancel
                                         lyricsShareGlyphVisible -> lyricPicker.beginPicking
                                         else -> onOpenMenu
                                     },
-                                    haptic = if (lyricsShareGlyphVisible && !showRevertCue) {
+                                    haptic = if (lyricsShareGlyphVisible) {
                                         Haptic.Select
                                     } else {
                                         Haptic.Tap
