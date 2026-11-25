@@ -37,7 +37,8 @@ jobs:
         echo "LISTEN_TOGETHER_SERVER=${{ secrets.LISTEN_TOGETHER_SERVER }}" >> local.properties
 
         if [ -n "$KEYSTORE_DATA" ] && [ -n "$KEY_ALIAS" ]; then
-          echo "$KEYSTORE_DATA" | base64 -d > brukchord-release.jks
+          echo "Release keystore secret found; using configured signing keystore."
+          echo "$KEYSTORE_DATA" | tr -d '[:space:]' | base64 -d > brukchord-release.jks
           {
             echo "storeFile=brukchord-release.jks"
             echo "storePassword=$KEYSTORE_PASSWORD"

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.1
+
+- Release 1.10.1 to verify app signing and smooth in-place updates
+- No new features or functional changes from version 1.10
+
 ## 1.10
 
 - Added Google Drive backup and restore to easily save and restore your settings and playlists
